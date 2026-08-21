@@ -1,7 +1,6 @@
 @echo off
 title Antigravity 汉化还原工具
 
-:: 探测 node 命令或常见 Node.js 安装路径
 set "NODE_CMD=node"
 where node >nul 2>nul
 if %errorlevel%==0 goto NODE_READY

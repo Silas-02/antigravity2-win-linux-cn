@@ -4,7 +4,7 @@ These instructions apply to every AI agent and contributor working in this repos
 
 ## 1. Current target and sources of truth
 
-- The current localization target is **Antigravity v2.8.1**. The current version dictionary is `dicts/v2.8.1.json`; the version, date, support statement, and dictionary name documented in `README.md` must describe the same target.
+- The current localization target is **Antigravity v2.9.1**. The current version dictionary is `dicts/v2.9.1.json`; the version, date, support statement, and dictionary name documented in `README.md` must describe the same target.
 - Treat the repository's actual files and executable behavior as authoritative. If this document, `README.md`, a dictionary filename, or an engine comment disagrees with the current client or implementation, report the mismatch and update only the files needed for the requested task.
 - A version update must replace or deliberately migrate the previous version dictionary rather than leave multiple version dictionaries active by accident. The engine loads **every** `dicts/*.json` file, so retaining both old and new version files changes the effective dictionary. Before a version bump, compare against the official client source, audit collisions, update all current-version references, and do not change tags or release metadata unless explicitly requested.
 - `README.md` is the user-facing description of supported platforms, installation, restoration, and current coverage. Keep technical claims there consistent with `install.sh`, `uninstall.sh`, the Windows batch launchers, and `localization_engine.js`; do not claim tooling, tests, paths, or compatibility that the repository does not provide.

@@ -1,5 +1,4 @@
-#!/bin/bash
-# Antigravity 汉化卸载 - Ubuntu 一键还原脚本
+#!/usr/bin/env bash
 
 set -e
 
@@ -7,9 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo ""
 echo "[1/2] 正在还原官方文件..."
-node "$SCRIPT_DIR/localization_engine.js" --huifu "$@"
-
-if [ $? -ne 0 ]; then
+if ! node "$SCRIPT_DIR/localization_engine.js" --huifu "$@"; then
     echo ""
     echo "[错误] 还原失败，请检查上方错误信息。"
     exit 1

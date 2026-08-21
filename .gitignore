@@ -1,8 +1,5 @@
-scratch/
 _temp_asar/
 node_modules/
+_inst_utf8.tmp
+_uninst_utf8.tmp
 .DS_Store
-
-# Tool-specific exclusions
-.reasonix/
-.codegraph/

@@ -1,5 +1,4 @@
-#!/bin/bash
-# Antigravity 中文汉化 - Ubuntu 一键安装脚本
+#!/usr/bin/env bash
 
 set -e
 
@@ -17,21 +16,20 @@ echo "  [3] 显示中文品牌名"
 echo ""
 read -rp "请输入选项 [1/2/3]（直接按 Enter 默认为 1）: " CHOICE_VAL
 
-BRAND_ARG="--brand-title english"
+BRAND_ARGS=(--brand-title english)
 case "$CHOICE_VAL" in
-    2) BRAND_ARG="--brand-title hidden" ;;
-    3) BRAND_ARG="--brand-title translated" ;;
-    *) BRAND_ARG="--brand-title english" ;;
+    2) BRAND_ARGS=(--brand-title hidden) ;;
+    3) BRAND_ARGS=(--brand-title translated) ;;
+    *) BRAND_ARGS=(--brand-title english) ;;
 esac
 
 echo ""
 echo "[1/2] 正在注入汉化代码..."
-if ! node "$SCRIPT_DIR/localization_engine.js" $BRAND_ARG "$@"; then
+if ! node "$SCRIPT_DIR/localization_engine.js" "${BRAND_ARGS[@]}" "$@"; then
     echo ""
     echo "[错误] 注入失败，请检查上方错误信息。"
     echo "提示：如果上方显示“权限不足”或 “EACCES”，请使用 sudo 重新运行此脚本。"
     echo "示例：sudo ./install.sh"
-    # 从文件管理器双击启动时，给用户时间阅读上方的权限提示；管道和 CI 不等待输入。
     if [ -t 0 ]; then
         read -rp "按 Enter 键退出..." _
     fi

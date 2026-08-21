@@ -2,7 +2,6 @@ const fs = require('fs');
 const path = require('path');
 const child_process = require('child_process');
 
-// 自动向 PATH 补充 Node.js 路径（解决 Windows 下 npx / node 未加入环境变量的问题）
 if (process.platform === 'win32') {
     const defaultNodePaths = [
         'C:\\Program Files\\nodejs',
@@ -48,8 +47,18 @@ function getOptionValue(name, defaultValue) {
 
 const BRAND_TITLE_MODE = BRAND_TITLE_ALIASES[String(getOptionValue('--brand-title', 'english')).toLowerCase()] || 'english';
 
-const SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
-const SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */";
+const SIGNATURE_START = "'__ANTIGRAVITY_CHINESE_LOCALIZATION_START__';";
+const SIGNATURE_END = "'__ANTIGRAVITY_CHINESE_LOCALIZATION_END__';";
+const MENU_SIGNATURE_START = "'__ANTIGRAVITY_NATIVE_MENU_TRANSLATION_START__';";
+const MENU_SIGNATURE_END = "'__ANTIGRAVITY_NATIVE_MENU_TRANSLATION_END__';";
+const TRAY_SIGNATURE_START = "'__ANTIGRAVITY_TRAY_TRANSLATION_START__';";
+const TRAY_SIGNATURE_END = "'__ANTIGRAVITY_TRAY_TRANSLATION_END__';";
+const LEGACY_SIGNATURE_START = ['/', '* --- ANTIGRAVITY CHINESE LOCALIZATION START --- *', '/'].join('');
+const LEGACY_SIGNATURE_END = ['/', '* --- ANTIGRAVITY CHINESE LOCALIZATION END --- *', '/'].join('');
+const LEGACY_MENU_SIGNATURE_START = ['/', '/ =========================================='].join('');
+const LEGACY_MENU_SIGNATURE_END = 'translateMenu(menu.items);';
+const LEGACY_TRAY_SIGNATURE_START = ['/', '* --- TRAY TRANSLATION START --- *', '/'].join('');
+const LEGACY_TRAY_SIGNATURE_END = ['/', '* --- TRAY TRANSLATION END --- *', '/'].join('');
 
 function normalizeText(text) {
     if (!text) return "";
@@ -65,7 +74,6 @@ function loadDictionary() {
     const totalMap = {};
     const dictsDir = path.join(__dirname, DICTS_FOLDER);
     if (fs.existsSync(dictsDir)) {
-        // 固定加载顺序，避免相同规范化键因文件系统枚举顺序不同而产生不稳定译文。
         const files = fs.readdirSync(dictsDir).filter(file => file.endsWith('.json')).sort();
         for (const file of files) {
             try {
@@ -77,7 +85,6 @@ function loadDictionary() {
                     if (normK) totalMap[normK] = v;
                 }
             } catch (e) {
-                // ignore
             }
         }
     }
@@ -92,32 +99,23 @@ function loadDictionary() {
 function generateJs() {
     const fullDict = loadDictionary();
     const longEntries = Object.entries(fullDict).sort((a, b) => b[0].length - a[0].length);
-    
+
     const dictJson = JSON.stringify(fullDict, null, 4);
     const entriesJson = JSON.stringify(longEntries);
 
     const jsSource = `${SIGNATURE_START}
 (() => {
-    // V12.0 终极隔离版：基于容器回溯的物理隔离引擎
-    // 逻辑：不再仅仅检查当前标签，而是向上回溯父级，识别“代码/编辑器”禁区
     const map = new Map(Object.entries(DICT_PLACEHOLDER));
     const lowerMap = new Map();
     for (const [k, v] of map.entries()) lowerMap.set(k.toLowerCase(), v);
-    
+
     const longEntries = REPLACEMENT_ENTRIES_PLACEHOLDER;
     const translatedValues = new WeakMap();
 
-    // 禁区类名、标签与语义属性特征
     const BLOCKED_CLASSES = ['monaco-editor', 'editor-container', 'terminal', 'output-view', 'debug-console', 'code-view', 'artifact-container', 'suggest-widget'];
     const BLOCKED_TAGS = ['SCRIPT', 'STYLE', 'CODE', 'PRE', 'INPUT', 'TEXTAREA', 'SVG', 'CANVAS', 'SYMBOL', 'PATH'];
-    // 只有可能承载用户文本的禁用标签才需要额外写入网页翻译保护标记。
-    // SVG/PATH 等图形标签本身已经被引擎直接跳过，为每个图标增加 class 和
-    // translate 属性只会在设置页制造大量无意义的属性变更与样式重算。
     const AUTO_TRANSLATE_PROTECTED_TAGS = new Set(['CODE', 'PRE', 'INPUT', 'TEXTAREA']);
-    // Antigravity 2.6.0 会为每条已发送/历史用户消息添加此稳定测试标识。
-    // 排除消息本体，避免 UI 词条与用户原文相同时误译聊天气泡。
     const BLOCKED_TEST_IDS = new Set(['user-input-step']);
-    // 为后续发现的第三方嵌入区或特殊内容区预留显式的手动禁用开关。
     const SKIP_TRANSLATION_ATTR = 'data-ag-localization-skip';
 
     function norm(s) {
@@ -145,8 +143,6 @@ function generateJs() {
         return null;
     }
 
-    // 会话选择器的更新时间由前端在运行时生成，实际值会随数量和
-    // 时间单位变化。只匹配完整的相对时间文本，不翻译孤立数字或单位。
     function getRelativeTimeTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^(\\d+)\\s*(s|m|h|d|w|mo|yr)$/i);
@@ -178,8 +174,6 @@ function generateJs() {
         return translatedUnit ? match[1] + translatedUnit : null;
     }
 
-    // 交付件名称末尾的时间戳由前端按当前日期动态格式化。仅转换完整的时间戳
-    // 后缀，保留其前面的文件/交付件名称，避免把用户命名纳入全局词典。
     function getArtifactTimestampTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^(.*?)\\s*\\((Today|Yesterday)\\s+(\\d{1,2}):(\\d{2})\\s+(AM|PM)\\)$/i);
@@ -206,12 +200,13 @@ function generateJs() {
         return prefix ? prefix + " " + timestamp : timestamp;
     }
 
-    // 数量标签由 React 拆成动态数字、英文单位和独立复数 s。完整匹配允许
-    // 单复数及已经被旧规则部分翻译的形态，绝不固定截图中的示例数量。
     function getCompactCountLabelTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^(\\d+)\\s*(?:results?|个结果s?)$/i);
         if (match) return match[1] + " 个结果";
+
+        match = normalized.match(/^(?:Comments?|评论)\\s*[（(]\\s*(\\d+)\\s*[)）]$/i);
+        if (match) return "评论（" + match[1] + "）";
 
         match = normalized.match(/^(?:Listed|列出了)\\s*(\\d+)\\s*(?:tasks?|个任务\\s*s?)(?:\\s*([>v›❯〉→∨˅⌄▼▽⋁↓]))?$/i);
         if (match) return "列出了 " + match[1] + " 个任务" + (match[2] ? " " + match[2] : "");
@@ -221,8 +216,6 @@ function generateJs() {
         return null;
     }
 
-    // 运行状态可能是单个文本节点，也可能被动画组件拆成“Working”与三个点。
-    // 仅接受完整的三点/省略号状态；中文状态后重新出现的点也会被规范化。
     function getWorkingStatusTranslation(value) {
         const normalized = norm(value).replace(/[\\u200B-\\u200D\\uFEFF]/g, '');
         if (/^Working(?:\\s*\\.){3}$/i.test(normalized) || /^Working\\s*…$/i.test(normalized)) {
@@ -250,8 +243,6 @@ function generateJs() {
         return translated.join(" ");
     }
 
-    // 配额说明中的刷新时间来自运行时，完整句式匹配既保留动态值，也避免把
-    // day/hour 等孤立单位加入词典而影响其他界面或用户内容。
     function getQuotaNoticeTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^You have hit your weekly limit, it refreshes in (.+?)\\. If on a supported paid plan, you can use AI credits in the interim or upgrade to a higher tier\\.$/i);
@@ -270,8 +261,6 @@ function generateJs() {
             }
         }
 
-        // React 更新单独的时长节点时，固定前后文可能已经是中文。只在完整的
-        // 中文配额句式中接受英文时长，避免将普通页面里的孤立时长全局翻译。
         match = normalized.match(/^您已达到每周配额限制，将在 (.+?)后刷新。如果使用的是受支持的付费计划，您可以在此期间使用 AI 额度，或升级到更高等级的套餐。$/);
         if (match) {
             const duration = getQuotaDurationTranslation(match[1]);
@@ -290,7 +279,6 @@ function generateJs() {
         return null;
     }
 
-    // 核心隔离判断：回溯检查当前节点是否逻辑上属于“禁止汉化区”
     function isInBlockedZone(node) {
         let curr = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
         while (curr) {
@@ -301,19 +289,85 @@ function generateJs() {
                 const tag = curr.tagName.toUpperCase();
                 if (BLOCKED_TAGS.includes(tag)) return true;
                 if (curr.getAttribute('contenteditable') === 'true') return true;
-                
+
                 const className = curr.className || '';
                 if (typeof className === 'string') {
                     if (BLOCKED_CLASSES.some(cls => className.includes(cls))) return true;
                 }
             }
-            curr = curr.parentElement || (curr.parentNode && curr.parentNode.host); // 支持 Shadow DOM 穿透
+            curr = curr.parentElement || (curr.parentNode && curr.parentNode.host);
         }
         return false;
     }
 
-    // 查找当前节点之前最近的、带有实际文本的文本节点。React 常会把一句 UI
-    // 文案拆到多个 span / Text 节点中，不能只依赖当前节点的内容。
+    function isInCommentContext(node) {
+        let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        for (let depth = 0; current && depth < 10; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            const text = norm(current.textContent);
+            if (text.length <= 6000 && /(?:Comments?|评论)\\s*[（(]\\s*\\d+\\s*[)）]/i.test(text)) return true;
+            if (text.length <= 2000 && /(?:Save Comment|保存评论|Submit comment|提交评论|Add Comment|添加评论)/i.test(text)) return true;
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        return false;
+    }
+
+    function getCommentTimestampTranslation(node, value) {
+        const normalized = norm(value);
+        if (!/^now$/i.test(normalized)) return null;
+
+        let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        let timestampLike = false;
+        for (let depth = 0; current && depth < 3 && norm(current.textContent) === normalized; depth++) {
+            const tag = current.tagName?.toUpperCase();
+            const metadata = [
+                current.className,
+                current.getAttribute?.('data-testid'),
+                current.getAttribute?.('aria-label'),
+                current.getAttribute?.('title')
+            ].filter(valuePart => typeof valuePart === 'string').join(' ');
+            if (tag === 'TIME' || current.hasAttribute?.('datetime') || /(?:^|[-_\\s])(?:time|timestamp|date|muted|secondary|caption)(?:[-_\\s]|$)|(?:^|\\s)text-xs(?:\\s|$)/i.test(metadata)) {
+                timestampLike = true;
+                break;
+            }
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        if (!timestampLike || !isInCommentContext(node)) return null;
+        return "刚刚";
+    }
+
+    function isInDeleteTaskDialogContext(node) {
+        let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        for (let depth = 0; current && depth < 10; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            const text = norm(current.textContent);
+            const hasTitle = /(?:Delete Task|删除任务)/i.test(text);
+            const hasConfirmation = /Are you sure you want to delete|This action cannot be undone|您确定要删除(?:计划)?任务|此操作无法撤销/i.test(text);
+            if (text.length <= 1600 && hasTitle && hasConfirmation) return true;
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        return false;
+    }
+
+    function getDeleteTaskConfirmationTranslation(node, value) {
+        const normalized = norm(value);
+        if (!/^Are you sure you want to delete/i.test(normalized) && !/^\\?/i.test(normalized)) return null;
+        if (!isInDeleteTaskDialogContext(node)) return null;
+
+        let match = normalized.match(/^Are you sure you want to delete(?:\\s+the scheduled task)?\\s+(.+?)\\?\\s*(?:This action cannot be undone\\.?|此操作无法撤销。)$/i);
+        if (match) return "您确定要删除任务 " + match[1] + " 吗？此操作无法撤销。";
+
+        match = normalized.match(/^Are you sure you want to delete(?:\\s+the scheduled task)?(?:\\s+(.+))?$/i);
+        if (match) return "您确定要删除任务" + (match[1] ? " " + match[1] : " ");
+
+        if (/^\\?\\s*(?:This action cannot be undone\\.?|此操作无法撤销。)?$/i.test(normalized)) {
+            return /(?:This action cannot be undone|此操作无法撤销)/i.test(normalized)
+                ? " 吗？此操作无法撤销。"
+                : " 吗？";
+        }
+        return null;
+    }
+
     function findLastTextNode(node) {
         if (!node) return null;
         if (node.nodeType === Node.TEXT_NODE) {
@@ -343,9 +397,6 @@ function generateJs() {
 
     function replaceTextNode(node, value) {
         if (!node) return false;
-        // 写入与当前内容相同的 CharacterData 仍可能产生 MutationRecord。
-        // 对项目删除摘要这类多节点规则而言，同值写回会让观察器不断重新进入，
-        // 最终耗尽渲染线程。先记录已翻译值，再彻底跳过无变化的 DOM 写入。
         translatedValues.set(node, value);
         if (node.nodeValue === value) return false;
         node.nodeValue = value;
@@ -369,8 +420,6 @@ function generateJs() {
         return null;
     }
 
-    // 状态项允许随数量、单复数和末尾展开箭头变化；只接受完整状态或完整计数片段，
-    // 避免把一般页面内容误判为步骤状态。
     function translateExploredStatus(str) {
         if (!str || typeof str !== 'string') return null;
         const trimmed = str.trim();
@@ -443,6 +492,22 @@ function generateJs() {
                 'Reflect on recent successes or corrections to capture reusable skills or rules.',
                 "反思最近的成功或改进，以捕获可复用的技能或规则。"
             ]
+        },
+        {
+            source: 'agy-customizations',
+            display: "Antigravity 个性化定制",
+            descriptions: [
+                'Comprehensive guide and reference for the Antigravity Customization System.',
+                "Antigravity 个性化定制系统的综合指南与参考资料。"
+            ]
+        },
+        {
+            source: 'antigravity-guide',
+            display: "Antigravity 使用指南",
+            descriptions: [
+                'Provides a comprehensive guide, quick reference, and sitemap for Google Antigravity (AGY), including the Antigravity CLI (agy), Antigravity 2.0, Antigravity IDE, Python SDK, slash commands, keybindings, and customizations (skills, rules, MCP, sidecars).',
+                "为 Google Antigravity（AGY）提供全面指南、快速参考和网站地图，涵盖 Antigravity CLI（agy）、Antigravity 2.0、Antigravity IDE、Python SDK、斜杠命令、快捷键及个性化定制（技能、规则、MCP 和 Sidecar）。"
+            ]
         }
     ];
 
@@ -450,13 +515,13 @@ function generateJs() {
         const values = textNodes.map(textNode => norm(textNode.nodeValue));
         return SKILL_PICKER_DISPLAY_ENTRIES.find(entry => {
             const hasName = values.includes(entry.source) || values.includes(entry.display);
-            const hasDescription = entry.descriptions.some(description => values.includes(description));
+            const hasDescription = entry.descriptions.some(description => {
+                return values.some(value => value === description || value.includes(description));
+            });
             return hasName && hasDescription;
         }) || null;
     }
 
-    // 技能选择器的 name 同时也是点击后使用的 recipe/slash-command 标识。这里只在
-    // 同一条目中出现对应说明时改写名称文本节点，不修改属性、数据对象或输入内容。
     function translateSkillPickerEntry(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
 
@@ -465,7 +530,6 @@ function generateJs() {
         const entry = getSkillPickerDisplayEntry(textNodes);
         if (!entry) return false;
 
-        // 外层弹窗可能同时包含多个技能，优先交给实际承载名称与说明的最小后代。
         if (Array.from(element.children || []).some(child => {
             return !!getSkillPickerDisplayEntry(collectTextNodes(child));
         })) return false;
@@ -474,9 +538,6 @@ function generateJs() {
         return nameNode ? replaceTextNode(nameNode, entry.display) : false;
     }
 
-    // 主会话底部的运行提示使用稳定的 agent-loading 标识，并把动画点放在
-    // data-screenshot-volatile 子节点中循环渲染 0～3 个。只改写前缀文本节点，
-    // 保留动画节点及其 React 更新，避免等待三个点时漏过绝大多数动画帧。
     function translateAgentLoadingStatus(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         if (element.getAttribute('data-testid') !== 'agent-loading') return false;
@@ -498,7 +559,6 @@ function generateJs() {
         const translated = getWorkingStatusTranslation(original);
         if (!translated || norm(original) === translated) return false;
 
-        // 只处理完整状态所在的最小容器，不能吞掉同一行的工具标题或按钮文本。
         if (Array.from(element.children || []).some(child => {
             return !!getWorkingStatusTranslation(child.textContent || '');
         })) return false;
@@ -511,8 +571,6 @@ function generateJs() {
         return true;
     }
 
-    // 这些紧凑计数标签可能被拆成 3～5 个 React 文本节点。数字节点必须保留，
-    // 这样数量变化时 React 只需更新该节点，中文单位不会退回英文或残留复数 s。
     function translateCompactCountLabelContainer(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
 
@@ -522,7 +580,6 @@ function generateJs() {
         const translated = getCompactCountLabelTranslation(original);
         if (!translated || translated === original) return false;
 
-        // 从外层遍历时优先交给真正承载标签的最小后代，避免清空同一行的其他 UI。
         if (Array.from(element.children || []).some(child => {
             return !!getCompactCountLabelTranslation(child.textContent || '');
         })) return false;
@@ -530,8 +587,6 @@ function generateJs() {
         if (textNodes.length === 1) return replaceTextNode(textNodes[0], translated);
 
         const countIndex = textNodes.findIndex(textNode => /^\\s*\\d+\\s*$/.test(textNode.nodeValue || ''));
-        // 数字和英文单位处在同一动态节点时不能压平多个 React 节点。Listed
-        // 标签需在此保留该组合节点，否则下一次更新时会造成两个数量并存。
         if (countIndex < 0) {
             if (/^(?:Listed|列出了)\\s*\\d+/i.test(original)) {
                 const countedTaskIndex = textNodes.findIndex(textNode => {
@@ -559,8 +614,6 @@ function generateJs() {
         const prefix = translated.slice(0, translatedCountIndex);
         let suffix = translated.slice(translatedCountIndex + count.length);
         let trailingMarker = '';
-        // 右括号或展开箭头有时属于独立按钮/文本节点。将其留在最后一个节点，
-        // 既保留原有结构，也让中间的复数 s 在数量更新时仍可单独清除。
         if (textNodes.length > countIndex + 2) {
             const markerMatch = suffix.match(/^(.*?)([）>v›❯〉→∨˅⌄▼▽⋁↓])$/);
             if (markerMatch) {
@@ -581,8 +634,6 @@ function generateJs() {
         return true;
     }
 
-    // 配额段落通常是单个文本节点，但运行时也可能把刷新时长单独渲染。此规则
-    // 保留该动态节点，只重排完整句式的固定前后文；后续时长变化仍可增量更新。
     function translateQuotaNoticeContainer(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
 
@@ -619,39 +670,53 @@ function generateJs() {
         return true;
     }
 
-    // 归档提示中的“History.”是可点击元素，React 会将它与前后文拆成不同节点。
-    // 实际渲染时，各片段也可能先被词典分别改成中英混合文本。仅在整个容器精确
-    // 符合这句话时重排文本，保留 History 对应的原始元素及其事件行为。
-    function translateArchivedConversationNotice(element) {
-        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
-        const noticeText = norm(element.textContent);
-        const noticePattern = /^(?:View|视图|查看)\\s*(?:an\\s+archived\\s+conversation|个?\\s*已归档(?:的)?(?:会话|对话))\\s*(?:in|，?请前往)\\s*(?:History|历史记录)[.。]?$/i;
-        if (!noticePattern.test(noticeText)) return false;
-
-        // History 在当前版本中不一定使用 <a>，也可能是 button/span。取第一个
-        // 仅包含该标签文案的后代元素，确保中文后缀插入到可点击元素之外。
-        const historyElement = Array.from(element.querySelectorAll('*')).find(candidate => {
-            return /^(?:History|历史记录)[.。]?$/i.test(norm(candidate.textContent));
-        });
-        if (!historyElement) return false;
-
-        const textNodes = collectTextNodes(element);
-        const prefixNode = textNodes.find(textNode => !historyElement.contains(textNode));
-        const historyTextNodes = collectTextNodes(historyElement);
-        if (!prefixNode || historyTextNodes.length === 0) return false;
-
-        replaceTextNode(prefixNode, "可在");
-        for (const textNode of textNodes) {
-            if (textNode !== prefixNode && !historyElement.contains(textNode)) replaceTextNode(textNode, '');
-        }
-        replaceTextNode(historyTextNodes[0], "历史记录");
-        for (let i = 1; i < historyTextNodes.length; i++) replaceTextNode(historyTextNodes[i], '');
-        historyElement.parentNode.insertBefore(document.createTextNode("中查看已归档的会话。"), historyElement.nextSibling);
-        return true;
+    function getArchivedConversationNoticeTranslation(value) {
+        const noticePattern = /^(?:View|视图|查看)\\s*(?:an\\s+archived\\s+conversation|(?:an\\s+)?个?\\s*已归档(?:的)?(?:会话|对话))\\s*(?:in|，?请前往)\\s*(?:History|历史记录)[.。]?$/i;
+        return noticePattern.test(norm(value)) ? "可在“历史记录”中查看已归档的会话。" : null;
     }
 
-    // 2.6.0 会将 “Show N more...” 拆入多个 span。按容器完整文本匹配，
-    // 保留动态数量，不为截图中的某个固定数字建立词条。
+    function translateArchivedConversationNotice(element) {
+        if (!element) return false;
+        let current = element.nodeType === Node.TEXT_NODE ? element.parentElement : element;
+
+        for (let depth = 0; current && depth < 7; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            if (current.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(current) || !getArchivedConversationNoticeTranslation(current.textContent)) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const historyElement = Array.from(current.querySelectorAll('*')).find(candidate => {
+                return !isInBlockedZone(candidate) && /^(?:History|历史记录)[.。]?$/i.test(norm(candidate.textContent));
+            });
+            if (!historyElement) return false;
+
+            const textNodes = collectTextNodes(current);
+            const historyTextNodes = collectTextNodes(historyElement);
+            if (textNodes.length === 0 || historyTextNodes.length === 0 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+
+            const firstHistoryIndex = textNodes.indexOf(historyTextNodes[0]);
+            const lastHistoryIndex = textNodes.indexOf(historyTextNodes[historyTextNodes.length - 1]);
+            if (firstHistoryIndex <= 0 || lastHistoryIndex < firstHistoryIndex) return false;
+
+            const prefixNodes = textNodes.slice(0, firstHistoryIndex);
+            const suffixNodes = textNodes.slice(lastHistoryIndex + 1);
+            replaceTextNode(prefixNodes[0], "可在");
+            for (let i = 1; i < prefixNodes.length; i++) replaceTextNode(prefixNodes[i], '');
+            replaceTextNode(historyTextNodes[0], "历史记录");
+            for (let i = 1; i < historyTextNodes.length; i++) replaceTextNode(historyTextNodes[i], '');
+
+            if (suffixNodes.length > 0) {
+                replaceTextNode(suffixNodes[0], "中查看已归档的会话。");
+                for (let i = 1; i < suffixNodes.length; i++) replaceTextNode(suffixNodes[i], '');
+            } else {
+                historyElement.parentNode.insertBefore(document.createTextNode("中查看已归档的会话。"), historyElement.nextSibling);
+            }
+            return true;
+        }
+        return false;
+    }
+
     function translateShowMoreStatus(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         const match = norm(element.textContent).match(/^Show\\s+(\\d+)\\s+more(?:\\.\\.\\.|…)?$/i);
@@ -664,26 +729,18 @@ function generateJs() {
         return true;
     }
 
-    // 基线配额提示中的日期由运行时插入，且可能被 React 拆为多个节点。只有完整
-    // 英文句子出现后才替换，防止日期尚未插入完时把首位数字误当作完整刷新时间。
     function getBaselineQuotaRefreshTranslation(value) {
         const match = norm(value).match(/^Your plan(?:'s|’s) baseline quota will refresh on\\s+(.+?)[.。]$/i);
         if (!match) return null;
 
         let refreshTime = match[1].trim();
-        // “on 2.” 只是日期异步插入过程中的首位片段，不能提前生成“于 2 刷新”。
-        // 等待 MutationObserver 收到完整日期时间后，再由容器规则重排整句。
         if (/^\\d+$/.test(refreshTime)) return null;
-        // 某些构建会额外插入孤立的数字和句点，随后才渲染真正的日期时间。
-        // 仅在其后紧跟完整日期时间时忽略该无语义的前缀。
         const strayPrefix = refreshTime.match(/^\\d+\\.\\s+(\\d{2}\\/\\d{1,2}\\/\\d{1,2}\\s+\\d{1,2}:\\d{2}:\\d{2})$/);
         if (strayPrefix) refreshTime = strayPrefix[1];
 
         return "您当前计划的基础配额将于 " + refreshTime + " 刷新。";
     }
 
-    // 在不改动元素结构和可点击子元素的前提下，将文本节点范围替换为单个译文。
-    // 用于“前缀 + 动态日期 + 后续链接”这类由多个 React 文本节点组成的句子。
     function replaceTextRange(textNodes, start, end, value) {
         let offset = 0;
         let replaced = false;
@@ -700,8 +757,6 @@ function generateJs() {
             if (!replaced) {
                 replaceTextNode(textNode, before + value);
                 replaced = true;
-                // 如果同一节点在原句后还有英文提示，将它拆到新节点中，让常规词典
-                // 处理，而不是把整段中英混合文本标记为“已翻译”。
                 if (after && textNode.parentNode) {
                     textNode.parentNode.insertBefore(document.createTextNode(after), textNode.nextSibling);
                 }
@@ -719,11 +774,9 @@ function generateJs() {
 
     function translateBaselineQuotaNotice(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
-        // 由外至内遍历时，先让更小的实际提示容器处理，避免在页面根节点跨区域拼接文本。
         if (Array.from(element.children || []).some(child => /Your plan(?:'s|’s) baseline quota will refresh on/i.test(child.textContent || ''))) {
             return false;
         }
-        // 父容器可能同时包含用户消息或编辑器等禁区；只拼接可翻译节点，绝不跨越禁区。
         const textNodes = collectTextNodes(element).filter(textNode => !isInBlockedZone(textNode));
         if (textNodes.length === 0) return false;
 
@@ -736,10 +789,39 @@ function generateJs() {
         return replaceTextRange(textNodes, match.index, match.index + match[0].length, translated);
     }
 
+    function getAgentSourceDisplayName(value) {
+        const normalized = norm(value);
+        if (/^browser$/i.test(normalized)) return "浏览器";
+        if (/^(?:Root|Main)\\s+Agent$/i.test(normalized)) return "主智能体";
+        return normalized;
+    }
+
     function getDynamicSubagentStatusTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^Found\\s+(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
         if (match) return "找到 " + match[1] + " 个子智能体" + (match[2] ? " " + match[2] : "");
+
+        match = normalized.match(/^Found\\s+(?:Subagents?|子智能体)$/i);
+        if (match) return "已找到子智能体";
+
+        match = normalized.match(/^Found\\s+(?:Browsers?|浏览器)(?:\\s*([>›❯〉→]))?$/i);
+        if (match) return "已找到浏览器" + (match[1] ? " " + match[1] : "");
+
+        match = normalized.match(/^(?:Killed|已中止)\\s+(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
+        if (match) return "已中止 " + match[1] + " 个子智能体" + (match[2] ? " " + match[2] : "");
+
+        match = normalized.match(/^Message\\s+from\\s+(?:Root\\s+Agent|主智能体)(?:\\s*([>›❯〉→]))?$/i);
+        if (match) return "来自主智能体的消息" + (match[1] ? " " + match[1] : "");
+
+        match = normalized.match(/^Error\\s+from\\s+(.+?)\\s+\\(([^()]+)\\)(?:\\s*([>›❯〉→]))?$/i);
+        if (match) return "来自" + getAgentSourceDisplayName(match[1]) + "（" + match[2] + "）的错误" + (match[3] ? " " + match[3] : "");
+
+        match = normalized.match(/^Error\\s+from\\s+\\(([^()]+)\\)(?:\\s*([>›❯〉→]))?$/i);
+        if (match) {
+            const displayName = getAgentSourceDisplayName(match[1]);
+            const source = displayName === match[1] ? " " + match[1] + " " : displayName + "（" + match[1] + "）";
+            return "来自" + source + "的错误" + (match[2] ? " " + match[2] : "");
+        }
 
         match = normalized.match(/^Timed\\s+(\\d+)\\s+(seconds?|minutes?|hours?)(?:\\s*([>›❯〉→]))?$/i);
         if (match) {
@@ -752,6 +834,9 @@ function generateJs() {
 
         match = normalized.match(/^(\\d+)\\s+tasks?\\s+running,\\s*(\\d+)\\s+active\\s+goals?$/i);
         if (match) return match[1] + " 个任务正在运行，" + match[2] + " 个活跃目标";
+
+        match = normalized.match(/^(\\d+)\\s+subagents?\\s*\\/\\s*tasks?\\s+running$/i);
+        if (match) return match[1] + " 个子智能体/任务正在运行";
 
         match = normalized.match(/^(\\d+)\\s+active\\s+goals?$/i);
         if (match) return match[1] + " 个活跃目标";
@@ -775,8 +860,6 @@ function generateJs() {
         return null;
     }
 
-    // 系统事件标题可能由“[状态] + 动态任务标题”组成。只翻译已知状态标记，
-    // 保留后面的任务标题原文，避免将用户命名的任务内容纳入全局词典。
     function getBracketedTaskStatusTranslation(value) {
         const normalized = norm(value);
         const match = normalized.match(/^\\[(Completed|Blocked|Running|Failed|Stopped|In Progress|Cancelled|Canceled)\\](?:\\s+(.+))?$/i);
@@ -789,8 +872,6 @@ function generateJs() {
         return "[" + translatedStatus + "]" + (match[2] ? " " + match[2] : "");
     }
 
-    // 产品名及 project/workspace 名称来自运行时产品配置。保留这些名称本身，
-    // 只翻译固定的界面说明，避免为某个品牌或未来产品变体建立硬编码词条。
     function getDynamicProductUiTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^When toggled on,\\s+(.+?)\\s+collects usage data to help Google enhance performance and features\\.$/i);
@@ -835,8 +916,6 @@ function generateJs() {
         return match ? match[1] + " 个已归档会话" : null;
     }
 
-    // 项目危险区域的删除摘要由项目名和会话数量动态拼接。完整文本节点可以
-    // 直接翻译；React 拆分节点则交给下方的结构化处理，避免宽泛翻译 including。
     function getProjectDeleteSummaryTranslation(value) {
         const normalized = norm(value);
         const match = normalized.match(/^(?:Permanently delete|永久删除)\\s+(.{1,200}?)\\s*(?:including|，?包含)\\s+((?:\\d+\\s+(?:active conversations?|个活跃会话)(?:\\s*(?:and|及)\\s*\\d+\\s+(?:archived conversations?|个已归档会话))?)|(?:\\d+\\s+(?:archived conversations?|个已归档会话)))[.。]?$/i);
@@ -849,11 +928,6 @@ function generateJs() {
     function translateProjectDeleteSummary(element) {
         if (!element) return false;
 
-        // 2.8.x 会异步挂载多个项目设置面板，MutationObserver 收到的节点可能是
-        // 会话数量所在的 strong，而不是完整说明 span。从任意新增子节点向上找到
-        // 最近的实际说明 span；逐节点替换固定文案，保留项目名和 strong 结构。
-        // 不能把整句压入首节点再清空其余节点，否则 React 后续更新项目名/计数时
-        // 会把新值插回旧位置，造成一个项目的摘要覆盖到下一个项目。
         let current = element.nodeType === Node.TEXT_NODE ? element.parentElement : element;
         for (let depth = 0; current && depth < 6; depth++) {
             if (current === document.body || current === document.documentElement) break;
@@ -874,8 +948,6 @@ function generateJs() {
                     });
                     if (prefixIndex < 0 || includingIndex < 0 || countIndex < 0) return false;
 
-                    // 项目名必须位于前缀和 including 之间；这样即使向上回溯时遇到
-                    // 其他普通 span，也不会误把无关文本当成删除摘要。
                     const hasProjectName = textNodes.slice(prefixIndex + 1, includingIndex)
                         .some(textNode => norm(textNode.nodeValue));
                     if (!hasProjectName) return false;
@@ -895,21 +967,16 @@ function generateJs() {
         return false;
     }
 
-    // 自定义内容预算的百分比由运行时计算。既支持完整文本节点，也支持
-    // React 拆出的“数值”与“% of ...”相邻文本节点，不固定某个示例值。
     function getCustomizationBudgetTranslation(value) {
         const match = norm(value).match(/^(\\d+(?:\\.\\d+)?)%\\s+of the customization budget is available\\.$/i);
         return match ? match[1] + "% 的个性化定制预算可用。" : null;
     }
 
-    // 交付件标题中的文件数由运行时插入，不能用固定数字或残缺后缀词条替换。
     function getArtifactFileCountTranslation(value) {
         const match = norm(value).match(/^Artifacts\\s*\\((\\d+)\\s+Files?\\s+for\\s+Conversation\\)$/i);
         return match ? "交付件（本会话有 " + match[1] + " 个文件）" : null;
     }
 
-    // 命令输入卡片会按状态和输入类型组合文案。匹配完整状态，避免翻译
-    // “Error sending”之类的宽泛片段而影响其他发送错误。
     function getCommandInputStatusTranslation(value) {
         const match = norm(value).match(/^(Rejected sending|Sent|Suggested sending|Error sending|Sending)\\s+(termination request|input)\\s+to command$/i);
         if (!match) return null;
@@ -925,20 +992,88 @@ function generateJs() {
         }
     }
 
-    // 数量状态也可能被图标和嵌套 span 拆开。只匹配完整、无交互内容的状态文本。
     function translateDynamicSubagentStatusContainer(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
-        const textNodes = collectTextNodes(element).filter(textNode => !isInBlockedZone(textNode));
-        if (textNodes.length === 0) return false;
-        const translated = getDynamicSubagentStatusTranslation(textNodes.map(textNode => textNode.nodeValue || '').join(''));
-        if (!translated) return false;
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length === 0 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        const original = textNodes.map(textNode => textNode.nodeValue || '').join('');
+        const translated = getDynamicSubagentStatusTranslation(original);
+        if (!translated || norm(original) === translated) return false;
+
+        if (Array.from(element.children || []).some(child => {
+            return !!getDynamicSubagentStatusTranslation(child.textContent || '');
+        })) return false;
+
+        const killedMatch = norm(original).match(/^(?:Killed|已中止)\\s+(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
+        if (killedMatch && textNodes.length > 1) {
+            const countIndex = textNodes.findIndex(textNode => /^\\s*\\d+\\s*$/.test(textNode.nodeValue || ''));
+            if (countIndex > 0) {
+                const prefixIndex = textNodes.findIndex((textNode, index) => {
+                    return index < countIndex && /^(?:Killed|已中止)$/i.test(norm(textNode.nodeValue || ''));
+                });
+                const suffixIndex = textNodes.findIndex((textNode, index) => {
+                    return index > countIndex && /^subagents?(?:\\s*[>›❯〉→])?$/i.test(norm(textNode.nodeValue || ''));
+                });
+                if (prefixIndex >= 0 && suffixIndex >= 0) {
+                    const hasSeparateMarker = textNodes.some((textNode, index) => {
+                        return index > suffixIndex && /^[>›❯〉→]$/.test(norm(textNode.nodeValue || ''));
+                    });
+                    for (let i = 0; i < textNodes.length; i++) {
+                        const nodeText = norm(textNodes[i].nodeValue || '');
+                        if (i === prefixIndex) replaceTextNode(textNodes[i], "已中止 ");
+                        else if (i === countIndex) replaceTextNode(textNodes[i], killedMatch[1]);
+                        else if (i === suffixIndex) replaceTextNode(textNodes[i], " 个子智能体" + (killedMatch[2] && !hasSeparateMarker ? " " + killedMatch[2] : ""));
+                        else if (/^[>›❯〉→]$/.test(nodeText)) replaceTextNode(textNodes[i], " " + nodeText);
+                        else replaceTextNode(textNodes[i], '');
+                    }
+                    return true;
+                }
+            }
+
+            const countWithUnitIndex = textNodes.findIndex(textNode => /^\\s*\\d+\\s+subagents?(?:\\s*[>›❯〉→])?\\s*$/i.test(textNode.nodeValue || ''));
+            if (countWithUnitIndex > 0) {
+                const prefixIndex = textNodes.findIndex((textNode, index) => {
+                    return index < countWithUnitIndex && /^(?:Killed|已中止)$/i.test(norm(textNode.nodeValue || ''));
+                });
+                if (prefixIndex >= 0) {
+                    const hasSeparateMarker = textNodes.some((textNode, index) => {
+                        return index > countWithUnitIndex && /^[>›❯〉→]$/.test(norm(textNode.nodeValue || ''));
+                    });
+                    for (let i = 0; i < textNodes.length; i++) {
+                        const nodeText = norm(textNodes[i].nodeValue || '');
+                        if (i === prefixIndex) replaceTextNode(textNodes[i], "已中止");
+                        else if (i === countWithUnitIndex) replaceTextNode(textNodes[i], " " + killedMatch[1] + " 个子智能体" + (killedMatch[2] && !hasSeparateMarker ? " " + killedMatch[2] : ""));
+                        else if (/^[>›❯〉→]$/.test(nodeText)) replaceTextNode(textNodes[i], " " + nodeText);
+                        else replaceTextNode(textNodes[i], '');
+                    }
+                    return true;
+                }
+            }
+        }
+
+        const combinedRunMatch = norm(original).match(/^(\\d+)\\s+subagents?\\s*\\/\\s*tasks?\\s+running$/i);
+        const countIndex = combinedRunMatch
+            ? textNodes.findIndex(textNode => /^\\s*\\d+\\s*$/.test(textNode.nodeValue || ''))
+            : -1;
+        if (countIndex >= 0 && textNodes.length > 1) {
+            const suffixIndex = textNodes.findIndex((textNode, index) => {
+                return index > countIndex && norm(textNode.nodeValue || '');
+            });
+            if (suffixIndex >= 0) {
+                for (let i = 0; i < textNodes.length; i++) {
+                    if (i === countIndex) replaceTextNode(textNodes[i], combinedRunMatch[1]);
+                    else if (i === suffixIndex) replaceTextNode(textNodes[i], " 个子智能体/任务正在运行");
+                    else replaceTextNode(textNodes[i], '');
+                }
+                return true;
+            }
+        }
+
         replaceTextNode(textNodes[0], translated);
         for (let i = 1; i < textNodes.length; i++) replaceTextNode(textNodes[i], '');
         return true;
     }
 
-    // 企业登录页的 “OR” 是两个分隔线之间的纯视觉分隔符。不能把 OR 加入全局
-    // 词典，否则可能误改技术说明、代码或用户内容；仅匹配该组件的固定结构。
     function translateBusinessSsoOrDivider(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         if (element.tagName.toUpperCase() !== 'SPAN' || norm(element.textContent) !== 'OR') return false;
@@ -962,10 +1097,6 @@ function generateJs() {
         return true;
     }
 
-    // 这些规则需要读取一个小型容器的合并文本。旧实现会对设置弹窗中的每个
-    // 元素无条件执行全部规则，其中部分规则还会递归收集所有后代文本，导致
-    // 大型设置页首次挂载时出现明显停顿。先以文本长度和稳定英文特征筛选，
-    // 只有可能命中的紧凑容器才进入对应的深层检查。
     function translateSpecialContainers(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         if (!element.childNodes || element.childNodes.length === 0) return false;
@@ -974,7 +1105,7 @@ function generateJs() {
         const textLength = rawText.length;
         let translated = false;
 
-        if (textLength <= 300 && /(?:archived conversations?|已归档.*(?:会话|对话))/i.test(rawText)) {
+        if (textLength <= 300 && /(?:archived conversations?|已归档.*(?:会话|对话)|^(?:History|历史记录)[.。]?$)/i.test(rawText.trim())) {
             translated = translateArchivedConversationNotice(element) || translated;
         }
         if (textLength <= 80 && /(?:Show\\s+\\d+\\s+more|显示另外\\s+\\d+\\s+个)/i.test(rawText)) {
@@ -986,18 +1117,18 @@ function generateJs() {
         if (textLength <= 800 && /(?:weekly limit|每周配额)/i.test(rawText)) {
             translated = translateQuotaNoticeContainer(element) || translated;
         }
-        if (textLength <= 500 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进)/i.test(rawText)) {
+        if (textLength <= 900 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|Antigravity Customization System|comprehensive guide, quick reference, and sitemap|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进|个性化定制系统的综合指南|全面指南、快速参考和网站地图)/i.test(rawText)) {
             translated = translateSkillPickerEntry(element) || translated;
         }
         if (textLength <= 80 && /(?:Working|处理中|工作中)/i.test(rawText)) {
             translated = translateAgentLoadingStatus(element) || translated;
             translated = translateWorkingStatusContainer(element) || translated;
         }
-        if (textLength <= 120 && /(?:\\bresults?\\b|个结果|Listed|列出了|\\bsubagents?\\b|子智能体)/i.test(rawText)) {
+        if (textLength <= 120 && /(?:\\bresults?\\b|个结果|(?:Comments?|评论)\\s*[（(]\\s*\\d+|Listed|列出了|\\bsubagents?\\b|子智能体)/i.test(rawText)) {
             translated = translateCompactCountLabelContainer(element) || translated;
         }
         if (textLength <= 240 &&
-            /(?:\\bsubagents?\\b|^Found\\s+\\d+|^Timed\\s+\\d+|Messaged\\s+Root\\s+Agent|\\btasks?\\s+running\\b|\\bactive\\s+goals?\\b|^Goals?\\s+\\d+|\\bquestions?\\b)/i.test(rawText.trim())) {
+            /(?:\\bsubagents?\\b|子智能体|^Found\\s+(?:\\d+|Browsers?|浏览器)|^Timed\\s+\\d+|Messaged\\s+Root\\s+Agent|^Message\\s+from\\s+(?:Root\\s+Agent|主智能体)|^Error\\s+from\\s+|\\btasks?\\s+running\\b|\\bactive\\s+goals?\\b|^Goals?\\s+\\d+|\\bquestions?\\b)/i.test(rawText.trim())) {
             translated = translateDynamicSubagentStatusContainer(element) || translated;
         }
         if (textLength <= 600 &&
@@ -1010,8 +1141,6 @@ function generateJs() {
         return translated;
     }
 
-    // React 会把同一段 JSX 文案任意拆成多个相邻 Text 节点。先将同一元素中的
-    // 连续文本片段拼接后匹配词典，再把译文写回第一个节点，避免残留英文碎片。
     function getCombinedStatusTranslation(value) {
         const normalized = norm(value);
         if (!normalized) return null;
@@ -1029,6 +1158,9 @@ function generateJs() {
 
         const quotaNoticeTranslation = getQuotaNoticeTranslation(normalized);
         if (quotaNoticeTranslation) return quotaNoticeTranslation;
+
+        const archivedConversationNoticeTranslation = getArchivedConversationNoticeTranslation(normalized);
+        if (archivedConversationNoticeTranslation) return archivedConversationNoticeTranslation;
 
         const baselineQuotaTranslation = getBaselineQuotaRefreshTranslation(normalized);
         if (baselineQuotaTranslation) return baselineQuotaTranslation;
@@ -1094,8 +1226,6 @@ function generateJs() {
             return false;
         }
 
-        // 紧凑计数标签已由结构化规则保留数字与箭头节点。通用文本合并会把旧
-        // 数量压入第一个固定节点，导致 React 更新数字后出现重复数量。
         if (getCompactCountLabelTranslation(element.textContent || '')) return false;
 
         let textRun = [];
@@ -1120,9 +1250,6 @@ function generateJs() {
         return translateRun();
     }
 
-    // 提问卡片的选项标签由模型在运行时生成，偶尔会呈现为“中文 (English)”。
-    // 只在带进度、跳过和继续操作的问答组件中识别选项行，删除末尾重复的
-    // 纯英文释义；技术内容、聊天正文以及其他区域的括号文本均不受影响。
     function translateQuestionnaireOptionLabel(node, value) {
         const normalized = norm(value);
         const bilingualMatch = normalized.match(/^(.+?[\\u3400-\\u9fff].*?)\\s*[（(]([A-Za-z][A-Za-z0-9 .,'’/&+:#-]*)[)）]$/);
@@ -1147,7 +1274,6 @@ function generateJs() {
 
         current = optionRow.parentElement || (optionRow.getRootNode?.().host ?? null);
         for (let depth = 0; current && depth < 10; depth++) {
-            // 不把整个页面当作问答卡片，避免弹窗打开期间影响页面上的其他交互项。
             if (current === document.body || current === document.documentElement) break;
             const cardText = norm(current.textContent);
             const hasProgress = /\\b\\d+\\s+of\\s+\\d+\\b/i.test(cardText);
@@ -1158,18 +1284,17 @@ function generateJs() {
         return null;
     }
 
-    // 处理被框架拆开的动态状态文案。比如：
-    //   "29 " + "tool" + "s enabled"
-    //   "All scheduled tasks run as " + "Flash."
-    // 第一类在单节点词典匹配时会留下 "工具s enabled"；第二类的模型名是动态的，
-    // 无法为每一个模型名添加静态词条。
     function translateFragmentedStatus(node, originalVal) {
         const currentText = norm(originalVal);
         const previous = findPreviousTextNode(node);
         const previousText = previous ? norm(previous.nodeValue) : '';
 
-        // 步骤状态可拆为“Explored ”+“1”+“ folder”。除完整状态外，也只处理
-        // 带有计数的精确资源片段，并保留逗号或展开箭头等独立 UI 元素。
+        const commentCountMatch = currentText.match(/^[（(]\\s*(\\d+)\\s*[)）]$/);
+        if (commentCountMatch && /^(?:Comments?|评论)$/i.test(previousText)) {
+            replaceTextNode(previous, "评论");
+            return "（" + commentCountMatch[1] + "）";
+        }
+
         const statusItemMatch = currentText.match(new RegExp('^(files?|folders?|pages?|search(?:es)?|tasks?|commands?|tools?|rules?|repos(?:itories)?|images?)(\\s*,\\s*|\\s*' + EXPLORED_STATUS_SUFFIX + ')?$', 'i'));
         if (statusItemMatch && previous) {
             const unit = getExploredStatusUnit(statusItemMatch[1]);
@@ -1183,11 +1308,25 @@ function generateJs() {
             if (/^\\d+$/.test(previousText)) return " " + unit + translatedTail;
         }
 
-        // 智能体状态标题常被拆成普通文本、加粗数字和折叠按钮。分别支持
-        // “Found ”+“20 subagents”及“Found ”+“20”+“ subagents”等形态。
-        let statusMatch = currentText.match(/^(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
+        let statusMatch = currentText.match(/^(?:subagents?|子智能体)(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^Found$/i.test(previousText)) {
+            replaceTextNode(previous, "已找到");
+            return "子智能体" + (statusMatch[1] ? " " + statusMatch[1] : "");
+        }
+
+        statusMatch = currentText.match(/^(?:Browsers?|浏览器)(?:\\s*([>›❯〉→]))?$/i);
+        if (statusMatch && /^Found$/i.test(previousText)) {
+            replaceTextNode(previous, "已找到");
+            return "浏览器" + (statusMatch[1] ? " " + statusMatch[1] : "");
+        }
+
+        statusMatch = currentText.match(/^(\\d+)\\s+subagents?(?:\\s*([>›❯〉→]))?$/i);
         if (statusMatch && /^Found$/i.test(previousText)) {
             replaceTextNode(previous, "找到");
+            return " " + statusMatch[1] + " 个子智能体" + (statusMatch[2] ? " " + statusMatch[2] : "");
+        }
+        if (statusMatch && /^(?:Killed|已中止)$/i.test(previousText)) {
+            replaceTextNode(previous, "已中止");
             return " " + statusMatch[1] + " 个子智能体" + (statusMatch[2] ? " " + statusMatch[2] : "");
         }
         statusMatch = currentText.match(/^subagents?(?:\\s*([>›❯〉→]))?$/i);
@@ -1195,6 +1334,10 @@ function generateJs() {
             const foundNode = findPreviousTextNode(previous);
             if (foundNode && /^Found$/i.test(norm(foundNode.nodeValue))) {
                 replaceTextNode(foundNode, "找到 ");
+                return " 个子智能体" + (statusMatch[1] ? " " + statusMatch[1] : "");
+            }
+            if (foundNode && /^(?:Killed|已中止)$/i.test(norm(foundNode.nodeValue))) {
+                replaceTextNode(foundNode, "已中止 ");
                 return " 个子智能体" + (statusMatch[1] ? " " + statusMatch[1] : "");
             }
         }
@@ -1231,8 +1374,6 @@ function generateJs() {
             return " 个活跃目标";
         }
 
-        // “No ” + “Projects” + “ found” 会由词典先将 Projects 翻成“项目”。
-        // 在处理收尾节点时合并为完整中文短句，避免保留两侧英文碎片。
         if (/^found$/i.test(currentText) && previousText === "项目") {
             const noNode = findPreviousTextNode(previous);
             if (noNode && /^No$/i.test(norm(noNode.nodeValue))) {
@@ -1242,8 +1383,6 @@ function generateJs() {
             }
         }
 
-        // 权限选项会把“始终允许”和“不在项目中时”拆成相邻节点。
-        // 合并后保持自然语序，并避免残留英文尾句。
         if (/^when not in a project$/i.test(currentText) && previousText === "是，且始终允许") {
             replaceTextNode(previous, "是，且在不属于任何项目时始终允许");
             return '';
@@ -1254,7 +1393,6 @@ function generateJs() {
             return '';
         }
 
-        // “29 tool” + “s enabled” 这类分割：直接在前一节点完成整句翻译。
         if (/^s\\s+enabled$/i.test(currentText) && previous) {
             const countAndTool = previousText.match(/^(\\d+)\\s+tools?$/i);
             if (countAndTool) {
@@ -1263,14 +1401,11 @@ function generateJs() {
             }
         }
 
-        // “29 ” + “tool(s)” + “enabled” 或 “s enabled” 这类分割。
-        // 工具节点可能已经被单词词典翻成“工具”，因此同时识别中英文。
         const isEnabledSuffix = /^s\\s+enabled$/i.test(currentText) || /^enabled$/i.test(currentText);
         if (isEnabledSuffix && previous) {
             let toolNode = previous;
             let toolText = previousText;
 
-            // “tool” + “s” + “enabled” 会在处理 enabled 时遇到中间的 s 节点。
             if (/^s$/i.test(toolText) && /^enabled$/i.test(currentText)) {
                 toolNode = findPreviousTextNode(previous);
                 toolText = toolNode ? norm(toolNode.nodeValue) : '';
@@ -1285,35 +1420,27 @@ function generateJs() {
             }
         }
 
-        // “所有计划任务均以 ”已经由前缀词典翻译后，再把其后的动态模型名补全。
-        // 这也会在模型名异步插入时由 MutationObserver 自动生效。
         if (previousText === "所有计划任务均以" && currentText && !/[\\u4e00-\\u9fff]/.test(currentText)) {
             const model = currentText.replace(/[.。]+$/, '').trim();
             if (model) return model + " 模型运行。";
         }
 
-        // 模型名与句号被拆成两个节点时，移除遗留的英文句号，避免显示“。.”。
         if (/^[.。]$/.test(currentText) && /模型运行。$/.test(previousText)) {
             return '';
         }
 
-        // 删除计划任务确认提示会把“前缀 + 动态任务名 + 问号/撤销说明”拆成多个节点。
-        // 前缀由词典先翻译；这里向前查找该前缀，再仅翻译紧随任务名的英文收尾。
         if (/^\\?\\s*(?:This action cannot be undone\\.?)?$/i.test(currentText) && previous) {
             let candidate = previous;
             for (let i = 0; i < 6 && candidate; i++) {
-                if (norm(candidate.nodeValue) === "您确定要删除计划任务") {
+                if (/^您确定要删除(?:计划)?任务$/.test(norm(candidate.nodeValue))) {
                     return /This action cannot be undone/i.test(currentText)
-                        ? "吗？此操作无法撤销。"
-                        : "吗？";
+                        ? " 吗？此操作无法撤销。"
+                        : " 吗？";
                 }
                 candidate = findPreviousTextNode(candidate);
             }
         }
 
-        // 删除项目/工作区弹窗会把确认句拆成“前缀 + 类型 + 名称 + ?”。
-        // 只有向前同时找到删除确认前缀和项目类型时才补写“吗？”，避免把页面上
-        // 其他独立问号做成全局替换。
         if (currentText === '?' && previous) {
             let candidate = previous;
             let hasProjectScope = false;
@@ -1335,11 +1462,13 @@ function generateJs() {
                 hasNumber = true;
                 viewNode = findPreviousTextNode(viewNode);
             }
+            const articleNodes = [];
             while (viewNode && /^(?:a|an|个)$/i.test(norm(viewNode.nodeValue))) {
-                replaceTextNode(viewNode, '');
+                articleNodes.push(viewNode);
                 viewNode = findPreviousTextNode(viewNode);
             }
-            if (viewNode && /^View$/i.test(norm(viewNode.nodeValue))) {
+            if (viewNode && /^(?:View|视图|查看)$/i.test(norm(viewNode.nodeValue))) {
+                for (const articleNode of articleNodes) replaceTextNode(articleNode, '');
                 replaceTextNode(viewNode, "查看");
                 if (!hasNumber) {
                     replaceTextNode(previous, "已归档的会话");
@@ -1355,8 +1484,6 @@ function generateJs() {
         try {
             if (!node) return;
 
-            // ShadowRoot 是 DocumentFragment；显式遍历它，确保已挂载的开放 Shadow DOM
-            // 与常规 DOM 使用同一套安全检查与词典规则。
             if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
                 for (const child of node.childNodes) translateNode(child);
                 return;
@@ -1364,8 +1491,7 @@ function generateJs() {
 
             if (node.nodeType === Node.ELEMENT_NODE) {
                 const tag = node.tagName.toUpperCase();
-                
-                // 给禁区元素打上 translate="no" 和 class="notranslate" 标记，物理防御网页自动翻译
+
                 let isBlocked = BLOCKED_TAGS.includes(tag);
                 if (!isBlocked) {
                     const className = node.className || '';
@@ -1378,9 +1504,6 @@ function generateJs() {
                 if (node.getAttribute('contenteditable') === 'true') {
                     isBlocked = true;
 
-                    // 反馈表单使用 contenteditable 编辑器实现，但其 placeholder 是固定
-                    // 属性而非用户内容。仅翻译这些精确匹配的展示属性，绝不改动编辑器
-                    // 的文本节点或已输入内容。
                     for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'aria-label', 'title']) {
                         const value = node.getAttribute(attr);
                         if (!value) continue;
@@ -1391,7 +1514,7 @@ function generateJs() {
                         else if (lowerMap.has(normalizedValue.toLowerCase())) node.setAttribute(attr, lowerMap.get(normalizedValue.toLowerCase()));
                     }
                 }
-                
+
                 const shouldMarkBlocked = isBlocked &&
                     (!BLOCKED_TAGS.includes(tag) || AUTO_TRANSLATE_PROTECTED_TAGS.has(tag));
                 if (shouldMarkBlocked) {
@@ -1405,9 +1528,7 @@ function generateJs() {
                     } catch (e) {}
                 }
 
-                // 1. 快速排除基础禁止标签
                 if (BLOCKED_TAGS.includes(tag)) {
-                    // 对于 INPUT, TEXTAREA 和 SVG，虽然不翻译其子元素或内容，但需要翻译其 placeholder, title, aria-label 等属性
                     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SVG') {
                         if (!isInBlockedZone(node.parentElement)) {
                             for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
@@ -1424,8 +1545,7 @@ function generateJs() {
                     }
                     return;
                 }
-                
-                // 2. 只有当确实不在禁区时，才翻译其属性
+
                 if (!isInBlockedZone(node)) {
                     translateSpecialContainers(node);
                     translateCombinedTextChildren(node);
@@ -1442,20 +1562,13 @@ function generateJs() {
                 }
 
                 if (node.shadowRoot) translateNode(node.shadowRoot);
-                // 当前元素的容器规则已经在上方检查过；递归到它的直接文本子节点时
-                // 不再读取一次相同的 textContent。观察器直接传入变更文本节点时，
-                // parentContainersScanned 保持默认 false，动态组合文案仍会重新匹配。
                 for (const child of node.childNodes) translateNode(child, true);
 
             } else if (node.nodeType === Node.TEXT_NODE) {
                 let originalVal = node.nodeValue;
                 if (!originalVal || originalVal.trim().length < 1) return;
-                // MutationObserver 也会收到汉化引擎自身产生的 CharacterData 记录。
-                // 已经由本引擎写入且内容未再变化的节点必须在任何容器扫描之前退出，
-                // 否则大型设置页会把同一批节点重复检查一遍。
                 if (translatedValues.get(node) === originalVal) return;
 
-                // 核心：如果是 skeleton 骨架占位文本，强制打上不翻译标记，防止自动翻译（例如 Google Translate 网页翻译）将其翻译为“装。资料。包装。资料。”
                 if (originalVal.toLowerCase().includes('pack.info')) {
                     const parent = node.parentElement;
                     if (parent) {
@@ -1471,16 +1584,12 @@ function generateJs() {
                     return;
                 }
 
-                // 核心：在处理文本节点前，必须确认其不在“禁止区”
                 if (isInBlockedZone(node)) return;
 
-                // 文案可能在当前节点刚插入时才拼接完整，需从父元素重新检查整段。
                 if (!parentContainersScanned && translateSpecialContainers(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
 
                 let newVal = originalVal;
-                // 暂时取下 UI 框架添加的 (Recommended) 前缀，以便按实际选项
-                // 文本匹配词典或动态规则；翻译完成后恢复为中文推荐标记。
                 const hasRecommended = /^\\(Recommended\\)(?:\\s+|$)/i.test(newVal);
                 if (hasRecommended) {
                     newVal = newVal.replace(/^\\(Recommended\\)(?:\\s+|$)/i, '');
@@ -1488,11 +1597,11 @@ function generateJs() {
                 const valNorm = norm(newVal);
                 const valLower = valNorm.toLowerCase();
 
-                
-                // 1. 精确匹配（含大小写自动纠正与快捷键检测）
                 const shortcutTrans = translateWithShortcut(valNorm);
                 const fragmentedStatusTrans = translateFragmentedStatus(node, originalVal);
                 const questionnaireOptionTrans = translateQuestionnaireOptionLabel(node, valNorm);
+                const commentTimestampTrans = getCommentTimestampTranslation(node, valNorm);
+                const deleteTaskConfirmationTrans = getDeleteTaskConfirmationTranslation(node, valNorm);
                 const exploredTrans = translateExploredStatus(valNorm);
                 const baselineQuotaRefreshTrans = getBaselineQuotaRefreshTranslation(valNorm);
                 const subagentStatusTrans = getDynamicSubagentStatusTranslation(valNorm);
@@ -1507,10 +1616,15 @@ function generateJs() {
                 const compactCountLabelTrans = getCompactCountLabelTranslation(valNorm);
                 const artifactTimestampTrans = getArtifactTimestampTranslation(valNorm);
                 const quotaNoticeTrans = getQuotaNoticeTranslation(valNorm);
+                const archivedConversationNoticeTrans = getArchivedConversationNoticeTranslation(valNorm);
                 if (fragmentedStatusTrans !== null) {
                     newVal = fragmentedStatusTrans;
                 } else if (questionnaireOptionTrans) {
                     newVal = questionnaireOptionTrans;
+                } else if (commentTimestampTrans) {
+                    newVal = commentTimestampTrans;
+                } else if (deleteTaskConfirmationTrans) {
+                    newVal = deleteTaskConfirmationTrans;
                 } else if (shortcutTrans) {
                     newVal = shortcutTrans;
                 } else if (exploredTrans) {
@@ -1541,6 +1655,8 @@ function generateJs() {
                     newVal = artifactTimestampTrans;
                 } else if (quotaNoticeTrans) {
                     newVal = quotaNoticeTrans;
+                } else if (archivedConversationNoticeTrans) {
+                    newVal = archivedConversationNoticeTrans;
                 } else if (map.has(valNorm)) {
                     newVal = map.get(valNorm);
                 } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
@@ -1830,10 +1946,6 @@ function generateJs() {
                     newVal = valNorm.replace(/^(.+?): i\\/o timeout$/i, (match, prefix) => {
                         return prefix + ": I/O 超时 (i/o timeout)";
                     });
-                } else if (/^Are you sure you want to delete the scheduled task (.+?)\\? This action cannot be undone\\.?$/i.test(valNorm)) {
-                    newVal = valNorm.replace(/^Are you sure you want to delete the scheduled task (.+?)\\? This action cannot be undone\\.?$/i, (match, name) => {
-                        return "您确定要删除计划任务 " + name + " 吗？此操作无法撤销。";
-                    });
                 } else if (/^Are you sure you want to delete (the |this )?project (.+?)\\??$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Are you sure you want to delete (the |this )?project (.+?)\\??$/i, (match, article, name) => {
                         return "您确定要删除项目 " + name + " 吗？";
@@ -1847,9 +1959,6 @@ function generateJs() {
                         return "这将永久删除 " + name + "，包含 " + active + " 个活跃会话及 " + archived + " 个已归档会话。此操作无法撤销。";
                     });
                 } else {
-                    // 2. 长句子串滑动替换
-                    // 短标签不可能包含长度超过 20 的长句词条。先按当前文本长度
-                    // 快速排除，避免设置页数百个短标签逐一扫描完整词典。
                     if (valNorm.length > 20) {
                         for (const [key, translated] of longEntries) {
                             if (key.length > 20 && key.length <= valNorm.length && valNorm.includes(key)) {
@@ -1857,8 +1966,7 @@ function generateJs() {
                             }
                         }
                     }
-                    
-                    // 3. 动态局部正则替换（处理合并在同一文本节点中的动态句子）
+
                     newVal = newVal.replace(/Your 5-hour limit will refresh in (\\d+) days?, (\\d+) hours?\\./gi, (match, d, h) => {
                         return "您的 5 小时配额将在 " + d + " 天 " + h + " 小时后刷新。";
                     });
@@ -1929,7 +2037,6 @@ function generateJs() {
                     newVal = newVal.replace(/Previous match \\((.+)\\)/gi, (m, k) => "上一个匹配项 (" + k + ")");
                     newVal = newVal.replace(/Next match \\((.+)\\)/gi, (m, k) => "下一个匹配项 (" + k + ")");
                     newVal = newVal.replace(/Close \\((.+)\\)/gi, (m, k) => "关闭 (" + k + ")");
-                    // 步骤节点量词片段翻译（处理 Explored N search / file / page 等拆分文本节点）
                     const exploredSec3 = translateExploredStatus(newVal);
                     if (exploredSec3) {
                         newVal = exploredSec3;
@@ -1957,8 +2064,6 @@ function generateJs() {
             } else if (m.type === 'characterData') {
                 translateNode(m.target);
             } else if (m.type === 'attributes') {
-                // 反馈类型切换时 React 会复用同一个 textarea，只更新 placeholder
-                // 属性；此时不会产生 childList 或 characterData 变更。
                 translateNode(m.target);
             }
         }
@@ -1979,8 +2084,6 @@ function generateJs() {
 
         engineStarted = true;
         try {
-            // 首次静态内容在观察器接管前完成，避免把引擎自己的初始写入再处理一遍。
-            // 后续 React 挂载与更新全部由 MutationObserver 增量处理。
             translateNode(target);
             observer.observe(target, obsOpts);
         } catch (e) {}
@@ -1993,8 +2096,6 @@ function generateJs() {
         return sr;
     };
 
-    // DOMContentLoaded 足以覆盖预加载脚本早于 body 的情况；startEngine 自身幂等，
-    // window.load 只作为兜底，不再按 100ms～6s 重复扫描整棵页面树。
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', startEngine);
     } else {
@@ -2007,38 +2108,123 @@ ${SIGNATURE_END}`;
     return jsSource.replace("DICT_PLACEHOLDER", dictJson).replace("REPLACEMENT_ENTRIES_PLACEHOLDER", entriesJson);
 }
 
+function removeMarkedBlocks(content, startMark, endMark) {
+    let cleaned = content;
+    let startIdx = cleaned.indexOf(startMark);
+    while (startIdx !== -1) {
+        const endIdx = cleaned.indexOf(endMark, startIdx + startMark.length);
+        if (endIdx === -1) break;
+        cleaned = cleaned.substring(0, startIdx) + cleaned.substring(endIdx + endMark.length);
+        startIdx = cleaned.indexOf(startMark);
+    }
+    return cleaned;
+}
+
 function cleanJsContent(content) {
-    const regex = new RegExp(escapeRegExp(SIGNATURE_START) + "[\\s\\S]*?" + escapeRegExp(SIGNATURE_END), "g");
-    return content.replace(regex, "");
+    const withoutLegacy = removeMarkedBlocks(content, LEGACY_SIGNATURE_START, LEGACY_SIGNATURE_END);
+    return removeMarkedBlocks(withoutLegacy, SIGNATURE_START, SIGNATURE_END);
 }
 
 function cleanMenuJsContent(content) {
-    const startMark = "// ==========================================";
-    const endMark = "translateMenu(menu.items);";
-    const startIdx = content.indexOf(startMark);
-    const endIdx = content.indexOf(endMark);
-    if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-        return content.substring(0, startIdx) + content.substring(endIdx + endMark.length);
-    }
-    return content;
+    const withoutLegacy = removeMarkedBlocks(content, LEGACY_MENU_SIGNATURE_START, LEGACY_MENU_SIGNATURE_END);
+    return removeMarkedBlocks(withoutLegacy, MENU_SIGNATURE_START, MENU_SIGNATURE_END);
 }
 
 function cleanTrayJsContent(content) {
-    const startMark = "/* --- TRAY TRANSLATION START --- */";
-    const endMark = "/* --- TRAY TRANSLATION END --- */";
-    const startIdx = content.indexOf(startMark);
-    const endIdx = content.indexOf(endMark);
-    if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-        return content.substring(0, startIdx) + content.substring(endIdx + endMark.length);
-    }
-    return content;
-}
-
-function escapeRegExp(string) {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const withoutLegacy = removeMarkedBlocks(content, LEGACY_TRAY_SIGNATURE_START, LEGACY_TRAY_SIGNATURE_END);
+    return removeMarkedBlocks(withoutLegacy, TRAY_SIGNATURE_START, TRAY_SIGNATURE_END);
 }
 
 let wasAppRunning = false;
+
+function getLinuxTargetUid() {
+    const sudoUidText = String(process.env.SUDO_UID || '');
+    if (/^\d+$/.test(sudoUidText)) return Number(sudoUidText);
+    return typeof process.getuid === 'function' ? process.getuid() : null;
+}
+
+function getLinuxProcessTable() {
+    try {
+        const stdout = child_process.execFileSync(
+            'ps',
+            ['-eo', 'pid=,ppid=,uid=,stat=,comm=,args='],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+        );
+        return stdout.split(/\r?\n/).map(line => {
+            const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)(?:\s+(.*))?$/);
+            if (!match) return null;
+            return {
+                pid: Number(match[1]),
+                ppid: Number(match[2]),
+                uid: Number(match[3]),
+                stat: match[4],
+                comm: match[5],
+                args: match[6] || ''
+            };
+        }).filter(Boolean);
+    } catch (e) {
+        return [];
+    }
+}
+
+function getLinuxAntigravityMainProcesses(processTable = getLinuxProcessTable()) {
+    const targetUid = getLinuxTargetUid();
+    return processTable.filter(entry => {
+        if (targetUid !== null && entry.uid !== targetUid) return false;
+        if (entry.comm.toLowerCase() !== 'antigravity') return false;
+        return !/(?:^|\s)--type(?:=|\s)/i.test(entry.args);
+    });
+}
+
+function collectLinuxProcessTreePids(processTable, rootPids) {
+    const collected = new Set(rootPids);
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const entry of processTable) {
+            if (!collected.has(entry.ppid) || collected.has(entry.pid)) continue;
+            collected.add(entry.pid);
+            changed = true;
+        }
+    }
+    return collected;
+}
+
+function refreshLinuxProcessTree(trackedPids) {
+    const processTable = getLinuxProcessTable();
+    const expanded = collectLinuxProcessTreePids(processTable, trackedPids);
+    for (const pid of expanded) trackedPids.add(pid);
+    return processTable.filter(entry => {
+        return trackedPids.has(entry.pid) && !entry.stat.toUpperCase().startsWith('Z');
+    });
+}
+
+function sleepSync(milliseconds) {
+    const waitArray = new Int32Array(new SharedArrayBuffer(4));
+    Atomics.wait(waitArray, 0, 0, milliseconds);
+}
+
+function signalLinuxProcesses(processEntries, signal) {
+    for (const entry of processEntries) {
+        try {
+            process.kill(entry.pid, signal);
+        } catch (e) {
+            if (e.code !== 'ESRCH') {
+                console.warn("[警告] 无法向进程 " + entry.pid + " (" + entry.comm + ") 发送 " + signal + ": " + e.message);
+            }
+        }
+    }
+}
+
+function waitForLinuxProcessTreeExit(trackedPids, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    let remaining = refreshLinuxProcessTree(trackedPids);
+    while (remaining.length > 0 && Date.now() < deadline) {
+        sleepSync(100);
+        remaining = refreshLinuxProcessTree(trackedPids);
+    }
+    return remaining;
+}
 
 function checkIfAppIsRunning() {
     try {
@@ -2046,30 +2232,73 @@ function checkIfAppIsRunning() {
             const stdout = child_process.execSync('tasklist /fi "imagename eq Antigravity.exe" /nh', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
             return stdout.toLowerCase().includes('antigravity.exe');
         } else {
-            // 使用 pgrep -x 精确匹配进程名，避免匹配到当前 node 脚本自身
-            const stdout = child_process.execSync('pgrep -x -i antigravity 2>/dev/null || true', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-            return stdout.trim().length > 0;
+            const processTable = getLinuxProcessTable();
+            if (processTable.length === 0) return true;
+            return getLinuxAntigravityMainProcesses(processTable).length > 0;
         }
     } catch (e) {
-        // pgrep/tasklist exits non-zero when no process found — not an error
     }
     return false;
 }
 
 function closeAntigravityProcesses() {
-    console.log("[1] 检测到 Antigravity 客户端正在运行，正在关闭以解除文件锁...");
+    console.log("[1] 检测到 Antigravity 客户端正在运行，正在等待客户端完整退出...");
     try {
         if (process.platform === 'win32') {
             child_process.execSync('taskkill /f /im Antigravity.exe /t >nul 2>nul');
-        } else {
-            // 使用 pkill -x 精确匹配进程名，避免误杀当前 node 脚本
-            child_process.execSync('pkill -x -i antigravity 2>/dev/null || true', { stdio: 'ignore' });
+            sleepSync(1500);
+            return true;
         }
     } catch (e) {
-        // ignore
+        console.error("[错误] 关闭 Antigravity 失败: " + e.message);
+        return false;
     }
-    const start = Date.now();
-    while (Date.now() - start < 1500) {}
+
+    const processTable = getLinuxProcessTable();
+    if (processTable.length === 0) {
+        console.error("[错误] 无法读取 Linux 进程列表，已停止汉化以避免覆盖运行中的客户端文件。");
+        return false;
+    }
+    const mainProcesses = getLinuxAntigravityMainProcesses(processTable);
+    if (mainProcesses.length === 0) return true;
+
+    const trackedPids = collectLinuxProcessTreePids(
+        processTable,
+        mainProcesses.map(entry => entry.pid)
+    );
+    const mainPids = new Set(mainProcesses.map(entry => entry.pid));
+
+    signalLinuxProcesses(mainProcesses, 'SIGTERM');
+    let remaining = waitForLinuxProcessTreeExit(trackedPids, 10000);
+
+    if (remaining.length > 0) {
+        const remainingMainProcesses = remaining.filter(entry => mainPids.has(entry.pid));
+        if (remainingMainProcesses.length > 0) {
+            console.log("[等待] Antigravity 主进程仍在关闭，正在再次请求正常退出...");
+            signalLinuxProcesses(remainingMainProcesses, 'SIGTERM');
+            remaining = waitForLinuxProcessTreeExit(trackedPids, 5000);
+        }
+    }
+
+    if (remaining.length > 0 && !remaining.some(entry => mainPids.has(entry.pid))) {
+        console.log("[等待] 主程序已退出，正在关闭 " + remaining.length + " 个遗留后台进程...");
+        signalLinuxProcesses(remaining, 'SIGTERM');
+        remaining = waitForLinuxProcessTreeExit(trackedPids, 5000);
+    }
+
+    if (remaining.length > 0) {
+        const summary = remaining
+            .slice(0, 8)
+            .map(entry => entry.pid + " (" + entry.comm + ")")
+            .join(', ');
+        console.error("[错误] Antigravity 未能完整退出，已停止汉化以保护正在运行的客户端。");
+        console.error("[错误] 仍在运行: " + summary + (remaining.length > 8 ? ' ...' : ''));
+        console.error("[提示] 请确认客户端和相关后台任务已结束后重新运行安装脚本。");
+        return false;
+    }
+
+    console.log("[√] Antigravity 主程序及后台进程已完整退出。");
+    return true;
 }
 
 function detectInstallationDir(manualDir) {
@@ -2104,12 +2333,10 @@ function detectInstallationDir(manualDir) {
             fs.existsSync(path.join(candidate, "resources", "app", "product.json"));
     };
 
-    // 环境变量
     addCandidate(process.env.ANTIGRAVITY_INSTALL_DIR);
     addCandidate(process.env.ANTIGRAVITY_HOME);
 
     if (process.platform === 'win32') {
-        // Windows 注册表探测
         const registryRoots = [
             'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
             'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
@@ -2128,10 +2355,8 @@ function detectInstallationDir(manualDir) {
                     addCandidate(value);
                 }
             } catch (e) {
-                // Registry probing is best-effort
             }
         }
-        // Windows 常见路径
         const driveLetters = ['C', 'D', 'E', 'F'];
         for (const drive of driveLetters) {
             addCandidate(`${drive}:\\Programs\\Antigravity`);
@@ -2143,7 +2368,6 @@ function detectInstallationDir(manualDir) {
             addCandidate(path.join(localAppdata, 'Programs', 'antigravity'));
         }
     } else {
-        // Linux 常见安装路径
         const homeDir = process.env.HOME || '';
         addCandidate('/opt/Antigravity');
         addCandidate('/opt/Antigravity/Antigravity-x64');
@@ -2158,7 +2382,6 @@ function detectInstallationDir(manualDir) {
             addCandidate(path.join(homeDir, '.local', 'share', 'Antigravity'));
             addCandidate(path.join(homeDir, 'antigravity'));
         }
-        // 解析 .desktop 文件
         const desktopFiles = [
             '/usr/share/applications/antigravity.desktop',
             '/usr/share/applications/Antigravity.desktop',
@@ -2180,7 +2403,6 @@ function detectInstallationDir(manualDir) {
                 } catch (e) {}
             }
         }
-        // 解析 which 输出
         try {
             const whichOut = child_process.execSync('which antigravity 2>/dev/null || which agy 2>/dev/null', { encoding: 'utf-8' }).trim();
             if (whichOut && fs.existsSync(whichOut)) {
@@ -2188,10 +2410,8 @@ function detectInstallationDir(manualDir) {
                 addCandidate(path.dirname(realP));
             }
         } catch (e) {}
-        // Snap
         addCandidate('/snap/antigravity/current');
         addCandidate('/snap/antigravity/current/usr/share/antigravity');
-        // Flatpak
         if (homeDir) {
             addCandidate(path.join(homeDir, '.local', 'share', 'flatpak', 'app', 'com.antigravity', 'current', 'active', 'files', 'share', 'antigravity'));
         }
@@ -2247,11 +2467,9 @@ function reportWritePermissionError(resourcesDir, error, action, entryScript = '
 
 function canWriteAntigravityResources(resourcesDir, entryScript) {
     const asarPath = path.join(resourcesDir, "app.asar");
-    // app.asar 缺失由后续安装逻辑报告为“未找到文件”，避免误报为权限问题。
     if (!fs.existsSync(asarPath)) return true;
 
     try {
-        // 安装需要创建 app.asar.bak，重打包时需要覆盖 app.asar；两项权限缺一不可。
         fs.accessSync(resourcesDir, fs.constants.W_OK | fs.constants.X_OK);
         fs.accessSync(asarPath, fs.constants.R_OK | fs.constants.W_OK);
         return true;
@@ -2261,11 +2479,7 @@ function canWriteAntigravityResources(resourcesDir, entryScript) {
     }
 }
 
-
-// ==========================================
-// Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
-// ==========================================
-function install20(resourcesDir) {
+function installLocalization(resourcesDir) {
     const asarPath = path.join(resourcesDir, "app.asar");
     const bakPath = path.join(resourcesDir, "app.asar.bak");
 
@@ -2274,7 +2488,6 @@ function install20(resourcesDir) {
         return false;
     }
 
-    // 1. 备份
     if (!fs.existsSync(bakPath)) {
         console.log(`[备份] 正在创建官方原始包备份: app.asar.bak ...`);
         try {
@@ -2289,7 +2502,6 @@ function install20(resourcesDir) {
         }
         console.log(`[备份] 备份成功！`);
     } else {
-        // 尝试用官方备份覆盖当前 app.asar，以确保每次汉化都基于最干净的官方英文包
         try {
             fs.copyFileSync(bakPath, asarPath);
             console.log(`[还原] 已重置当前 app.asar 为官方原始备份包，以进行全新注入...`);
@@ -2302,7 +2514,6 @@ function install20(resourcesDir) {
         }
     }
 
-    // 2. 临时提取目录
     const tempDir = path.join(__dirname, "_temp_asar");
     if (fs.existsSync(tempDir)) {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -2316,7 +2527,6 @@ function install20(resourcesDir) {
         return false;
     }
 
-    // 3. 注入 preload.js
     const preloadPath = path.join(tempDir, "dist", "preload.js");
     if (!fs.existsSync(preloadPath)) {
         console.error(`[错误] 解压后未能在指定路径找到 preload.js: ${preloadPath}`);
@@ -2327,7 +2537,6 @@ function install20(resourcesDir) {
     console.log(`[修改] 正在向 preload.js 注入汉化代码...`);
     let content = fs.readFileSync(preloadPath, 'utf-8');
 
-    // 清理已有的汉化，重新注入
     const cleanedContent = cleanJsContent(content);
     const translationJs = generateJs();
     const newContent = cleanedContent + "\n" + translationJs;
@@ -2335,18 +2544,15 @@ function install20(resourcesDir) {
     fs.writeFileSync(preloadPath, newContent, 'utf-8');
     console.log(`[修改] 注入成功！`);
 
-    // 3.1 注入 menu.js (系统菜单汉化)
     const menuPath = path.join(tempDir, "dist", "menu.js");
     if (fs.existsSync(menuPath)) {
         console.log(`[修改] 正在向 menu.js 注入菜单汉化代码...`);
         let menuContent = fs.readFileSync(menuPath, 'utf-8');
-        
+
         const menuCleaned = cleanMenuJsContent(menuContent);
-        
+
         const menuTranslationJs = `
-    // ==========================================
-    // Antigravity Native Menu Chinese Translation
-    // ==========================================
+    ${MENU_SIGNATURE_START}
     const translations = {
         'File': '文件',
         'Edit': '编辑',
@@ -2398,6 +2604,7 @@ function install20(resourcesDir) {
         }
     }
     translateMenu(menu.items);
+    ${MENU_SIGNATURE_END}
     `;
 
         const targetStr = "electron_1.Menu.setApplicationMenu(menu);";
@@ -2411,19 +2618,16 @@ function install20(resourcesDir) {
         }
     }
 
-    // 3.2 注入 tray.js (任务栏右键菜单汉化)
     const trayPath = path.join(tempDir, "dist", "tray.js");
     if (fs.existsSync(trayPath)) {
         console.log(`[修改] 正在向 tray.js 注入任务栏菜单汉化...`);
         let trayContent = fs.readFileSync(trayPath, 'utf-8');
-        
-        // 先清理已有的汉化块
+
         let trayCleaned = cleanTrayJsContent(trayContent);
-        
-        // 1. 注入 createTray 里的翻译块 (带标记)
+
         const targetCreate = "function createTray(actions) {";
         const replacementCreate = `function createTray(actions) {
-    /* --- TRAY TRANSLATION START --- */
+    ${TRAY_SIGNATURE_START}
     const translations = {
         'No agents running': '无运行中的智能体',
         'Open Antigravity': '打开反重力智能编程',
@@ -2434,58 +2638,52 @@ function install20(resourcesDir) {
             item.label = translations[item.label];
         }
     }
-    /* --- TRAY TRANSLATION END --- */`;
-        
+    ${TRAY_SIGNATURE_END}`;
+
         let trayPatched = trayCleaned.replace(targetCreate, replacementCreate);
-        
-        // 2. 使用正则替换 updateTrayAgentCount 里的动态显示文本
+
         const countRegex = /countItem\.label\s*=\s*\([\s\S]*?' running';/g;
         const replacementCount = "countItem.label = count > 0 ? `${count} 个智能体运行中` : '无运行中的智能体';";
         trayPatched = trayPatched.replace(countRegex, replacementCount);
-        
+
         fs.writeFileSync(trayPath, trayPatched, 'utf-8');
         console.log(`[修改] 任务栏菜单汉化注入成功！`);
     }
 
-    // 3.3 注入 loadingOverlay.js (加载页汉化)
     const loadingPath = path.join(tempDir, "dist", "loadingOverlay.js");
     if (fs.existsSync(loadingPath)) {
         console.log(`[修改] 正在向 loadingOverlay.js 注入加载页汉化...`);
         let loadingContent = fs.readFileSync(loadingPath, 'utf-8');
-        
+
         const targetText = '<div class="text">Loading Antigravity</div>';
         const replacementText = '<div class="text">反重力引擎已启动，正在努力摆脱地心引力...</div>';
-        
+
         loadingContent = loadingContent.replace(targetText, replacementText);
-        
+
         fs.writeFileSync(loadingPath, loadingContent, 'utf-8');
         console.log(`[修改] 加载页汉化注入成功！`);
     }
 
-    // 3.4 注入 updater.js (更新弹窗汉化)
     const updaterPath = path.join(tempDir, "dist", "updater.js");
     if (fs.existsSync(updaterPath)) {
         console.log(`[修改] 正在向 updater.js 注入更新弹窗汉化...`);
         let updaterContent = fs.readFileSync(updaterPath, 'utf-8');
-        
-        // 替换 Check for Updates 弹窗的属性
+
         const targetOptions = `                title: 'Check for Updates',
                 message: 'No updates available',
                 buttons: ['OK'],`;
         const replacementOptions = `                title: '检查更新',
                 message: '暂无可用更新',
                 buttons: ['确定'],`;
-        
+
         updaterContent = updaterContent.replace(targetOptions, replacementOptions);
         fs.writeFileSync(updaterPath, updaterContent, 'utf-8');
         console.log(`[修改] 更新弹窗汉化注入成功！`);
     }
 
-    // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
     const packRes = runCommandSync(`npx -y @electron/asar pack "${tempDir}" "${asarPath}"`);
-    
-    // 5. 清理临时文件夹
+
     fs.rmSync(tempDir, { recursive: true, force: true });
 
     if (!packRes.success) {
@@ -2494,11 +2692,11 @@ function install20(resourcesDir) {
         return false;
     }
 
-    console.log(`[√] Antigravity 2.0 汉化部署完成！`);
+    console.log(`[√] Antigravity 汉化部署完成！`);
     return true;
 }
 
-function restore20(resourcesDir) {
+function restoreLocalization(resourcesDir) {
     const asarPath = path.join(resourcesDir, "app.asar");
     const bakPath = path.join(resourcesDir, "app.asar.bak");
 
@@ -2514,9 +2712,6 @@ function restore20(resourcesDir) {
     return true;
 }
 
-// ==========================================
-// 入口
-// ==========================================
 function main() {
     let huifu = false;
     let manualDir = "";
@@ -2536,10 +2731,8 @@ function main() {
         }
     }
 
-    // 1. 探测路径
     const installDir = detectInstallationDir(manualDir);
 
-    // 2. 找到 resources 资源目录
     let resourcesDir = "";
     if (fs.existsSync(path.join(installDir, "resources"))) {
         resourcesDir = path.join(installDir, "resources");
@@ -2558,38 +2751,39 @@ function main() {
         process.exit(1);
     }
 
-    // 3. 在关闭客户端前先检查权限，避免失败时无谓关闭用户正在使用的客户端。
     if (!canWriteAntigravityResources(resourcesDir, huifu ? 'uninstall.sh' : 'install.sh')) {
         process.exit(1);
     }
 
-    // 4. 检测客户端是否正在运行，并根据参数决定是否关闭以解除文件锁定
     wasAppRunning = checkIfAppIsRunning();
     if (noKill) {
         console.log("[跳过] 检测到 --no-kill 参数，跳过关闭 Antigravity 运行进程。");
+    } else if (wasAppRunning) {
+        if (!closeAntigravityProcesses()) {
+            process.exit(1);
+        }
     } else {
-        closeAntigravityProcesses();
+        console.log("[跳过] Antigravity 客户端当前未运行，无需关闭进程。");
     }
 
-    // 5. 执行汉化或还原
     let success = false;
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");
-        success = restore20(resourcesDir);
+        success = restoreLocalization(resourcesDir);
     } else {
         console.log("====== 正在安装 Antigravity 中文汉化 ======");
-        success = install20(resourcesDir);
+        success = installLocalization(resourcesDir);
     }
 
     if (!success) {
         process.exit(1);
     }
 
-    // 6. 校验通过且原来客户端在运行，则自动重新启动客户端
-    if (success && wasAppRunning) {
+    if (success && wasAppRunning && !noKill) {
         console.log("\n[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...");
         try {
             let launched = false;
+            let restartDeferred = false;
             if (process.platform === 'win32') {
                 const exePath = path.join(installDir, 'Antigravity.exe');
                 if (fs.existsSync(exePath)) {
@@ -2599,33 +2793,42 @@ function main() {
                     launched = true;
                 }
             } else {
-                const exeCandidates = [
-                    path.join(installDir, 'antigravity'),
-                    path.join(installDir, 'Antigravity'),
-                    path.join(installDir, 'bin', 'antigravity'),
-                ];
-                for (const exePath of exeCandidates) {
-                    if (fs.existsSync(exePath)) {
-                        const child = child_process.spawn(exePath, [], { detached: true, stdio: 'ignore' });
-                        child.unref();
-                        console.log("[启动] 客户端启动成功！");
-                        launched = true;
-                        break;
-                    }
-                }
-                if (!launched) {
-                    try {
-                        const whichOut = child_process.execSync('which antigravity 2>/dev/null || which Antigravity 2>/dev/null', { encoding: 'utf-8' }).trim();
-                        if (whichOut) {
-                            const child = child_process.spawn(whichOut, [], { detached: true, stdio: 'ignore' });
+                const runningUnderSudo = typeof process.getuid === 'function'
+                    && process.getuid() === 0
+                    && process.env.SUDO_USER
+                    && process.env.SUDO_USER !== 'root';
+                if (runningUnderSudo) {
+                    console.log("[提示] 当前通过 sudo 安装；为避免以 root 身份启动桌面应用，请手动启动 Antigravity。");
+                    restartDeferred = true;
+                } else {
+                    const exeCandidates = [
+                        path.join(installDir, 'antigravity'),
+                        path.join(installDir, 'Antigravity'),
+                        path.join(installDir, 'bin', 'antigravity'),
+                    ];
+                    for (const exePath of exeCandidates) {
+                        if (fs.existsSync(exePath)) {
+                            const child = child_process.spawn(exePath, [], { detached: true, stdio: 'ignore' });
                             child.unref();
                             console.log("[启动] 客户端启动成功！");
                             launched = true;
+                            break;
                         }
-                    } catch (e) {}
+                    }
+                    if (!launched) {
+                        try {
+                            const whichOut = child_process.execSync('which antigravity 2>/dev/null || which Antigravity 2>/dev/null', { encoding: 'utf-8' }).trim();
+                            if (whichOut) {
+                                const child = child_process.spawn(whichOut, [], { detached: true, stdio: 'ignore' });
+                                child.unref();
+                                console.log("[启动] 客户端启动成功！");
+                                launched = true;
+                            }
+                        } catch (e) {}
+                    }
                 }
             }
-            if (!launched) {
+            if (!launched && !restartDeferred) {
                 console.warn("[警告] 未找到客户端可执行文件，请手动启动 Antigravity。");
             }
         } catch (e) {
