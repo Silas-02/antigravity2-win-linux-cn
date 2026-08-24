@@ -4,7 +4,7 @@
 
 > **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
 >
-> **语言支持**：仅简体中文 (去除了繁体中文及其他冗余翻译，专注极佳的简中开发体验)
+> **语言支持**：仅简体中文
 >
 > **汉化版本**：v2.9.1.2
 >
@@ -72,7 +72,7 @@
 * **方法 B：通过 Git 命令行克隆（开发者推荐 💻）**
 
   ```bash
-  git clone https://github.com/Lucian-02/antigravity2-win-linux-cn.git
+  git clone https://github.com/Silas-02/antigravity2-win-linux-cn.git
   cd antigravity2-win-linux-cn
   ```
 
