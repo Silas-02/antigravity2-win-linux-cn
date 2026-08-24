@@ -123,6 +123,38 @@ function generateJs() {
         return s.replace(/\\s+/g, ' ').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').trim();
     }
 
+    // Long dictionary entries may be replaced inside surrounding UI text, but
+    // they must not match inside a larger English identifier or word.
+    function replaceLongDictionaryEntry(value, key, translated) {
+        if (!value || !key || !value.includes(key)) return value;
+
+        const asciiWord = /[A-Za-z0-9_]/;
+        const needsLeftBoundary = asciiWord.test(key[0]);
+        const needsRightBoundary = asciiWord.test(key[key.length - 1]);
+        let searchFrom = 0;
+        let result = '';
+        let changed = false;
+
+        while (searchFrom < value.length) {
+            const index = value.indexOf(key, searchFrom);
+            if (index === -1) break;
+
+            const end = index + key.length;
+            const hasLeftBoundary = !needsLeftBoundary || index === 0 || !asciiWord.test(value[index - 1]);
+            const hasRightBoundary = !needsRightBoundary || end === value.length || !asciiWord.test(value[end]);
+            if (hasLeftBoundary && hasRightBoundary) {
+                result += value.slice(searchFrom, index) + translated;
+                searchFrom = end;
+                changed = true;
+            } else {
+                result += value.slice(searchFrom, index + 1);
+                searchFrom = index + 1;
+            }
+        }
+
+        return changed ? result + value.slice(searchFrom) : value;
+    }
+
     function translateWithShortcut(val) {
         if (!val) return null;
         const match = val.match(/^(.+?)\\s*\\((Ctrl|Cmd|Alt|Shift|⌘|⌥|⇧|⌃)\\+?([^)]*)\\)$/i);
@@ -1962,7 +1994,7 @@ function generateJs() {
                     if (valNorm.length > 20) {
                         for (const [key, translated] of longEntries) {
                             if (key.length > 20 && key.length <= valNorm.length && valNorm.includes(key)) {
-                                newVal = newVal.split(key).join(translated);
+                                newVal = replaceLongDictionaryEntry(newVal, key, translated);
                             }
                         }
                     }

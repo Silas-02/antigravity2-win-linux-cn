@@ -75,7 +75,6 @@
     "Suggestions": "建议",
     "Suggestions in Editor": "编辑器内建议",
     "Tab Speed": "Tab 建议速度",
-    "Fast": "快",
     "Slow": "慢",
     "Highlight newly inserted text after accepting a Tab completion.": "高亮接受 Tab 补全后新插入的文本",
     "Highlight After Accept": "接受后高亮",
