@@ -175,6 +175,22 @@ function generateJs() {
         return null;
     }
 
+    // Git refs are runtime identifiers, so translate only the bounded UI
+    // sentence around them and preserve the ref or remote name verbatim.
+    function getVersionControlUiTranslation(value) {
+        const normalized = norm(value);
+        if (/^All changes since the branch point$/i.test(normalized)) {
+            return "自分支点以来的所有更改";
+        }
+
+        let match = normalized.match(/^All changes since (\\S+)$/i);
+        if (match) return "自 " + match[1] + " 以来的所有更改";
+
+        match = normalized.match(/^Publish (\\S+) to origin$/i);
+        if (match) return "将 " + match[1] + " 发布到 origin";
+        return null;
+    }
+
     function getRelativeTimeTranslation(value) {
         const normalized = norm(value);
         let match = normalized.match(/^(\\d+)\\s*(s|m|h|d|w|mo|yr)$/i);
@@ -330,6 +346,38 @@ function generateJs() {
             curr = curr.parentElement || (curr.parentNode && curr.parentNode.host);
         }
         return false;
+    }
+
+    // The product-owned attachment label is rendered inside the protected
+    // user-input container. Match its exact source structure so user text,
+    // comment bodies, file names, and other descendants remain untouched.
+    function getProtectedProductUiTranslation(node, value) {
+        const normalized = norm(value);
+        if (normalized.toLowerCase() !== 'commented on:') return null;
+
+        const label = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        if (!label || label.tagName?.toUpperCase() !== 'SPAN') return null;
+
+        const labelClass = typeof label.className === 'string' ? label.className : '';
+        if (!labelClass.includes('text-sm') || !labelClass.includes('text-secondary-foreground')) return null;
+
+        const row = label.parentElement;
+        const rowClass = typeof row?.className === 'string' ? row.className : '';
+        if (!rowClass.includes('items-center') || !rowClass.includes('flex-wrap')) return null;
+
+        let current = row;
+        let userInput = null;
+        while (current) {
+            if (current.getAttribute?.('data-testid') === 'user-input-step') {
+                userInput = current;
+                break;
+            }
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        if (!userInput) return null;
+
+        if (map.has(normalized)) return map.get(normalized);
+        return lowerMap.get(normalized.toLowerCase()) ?? null;
     }
 
     function isInCommentContext(node) {
@@ -1541,7 +1589,9 @@ function generateJs() {
                         if (!value) continue;
                         const normalizedValue = norm(value);
                         const shortcutTranslation = translateWithShortcut(normalizedValue);
-                        if (shortcutTranslation) node.setAttribute(attr, shortcutTranslation);
+                        const versionControlTranslation = getVersionControlUiTranslation(normalizedValue);
+                        if (versionControlTranslation && versionControlTranslation !== value) node.setAttribute(attr, versionControlTranslation);
+                        else if (shortcutTranslation) node.setAttribute(attr, shortcutTranslation);
                         else if (map.has(normalizedValue)) node.setAttribute(attr, map.get(normalizedValue));
                         else if (lowerMap.has(normalizedValue.toLowerCase())) node.setAttribute(attr, lowerMap.get(normalizedValue.toLowerCase()));
                     }
@@ -1568,7 +1618,9 @@ function generateJs() {
                                 if (v) {
                                     const t = norm(v);
                                     const shortcutTrans = translateWithShortcut(t);
-                                    if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
+                                    const versionControlTrans = getVersionControlUiTranslation(t);
+                                    if (versionControlTrans && versionControlTrans !== v) node.setAttribute(attr, versionControlTrans);
+                                    else if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
                                     else if (map.has(t)) node.setAttribute(attr, map.get(t));
                                     else if (lowerMap.has(t.toLowerCase())) node.setAttribute(attr, lowerMap.get(t.toLowerCase()));
                                 }
@@ -1586,7 +1638,9 @@ function generateJs() {
                         if (v) {
                             const t = norm(v);
                             const shortcutTrans = translateWithShortcut(t);
-                            if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
+                            const versionControlTrans = getVersionControlUiTranslation(t);
+                            if (versionControlTrans && versionControlTrans !== v) node.setAttribute(attr, versionControlTrans);
+                            else if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
                             else if (map.has(t)) node.setAttribute(attr, map.get(t));
                             else if (lowerMap.has(t.toLowerCase())) node.setAttribute(attr, lowerMap.get(t.toLowerCase()));
                         }
@@ -1616,7 +1670,13 @@ function generateJs() {
                     return;
                 }
 
-                if (isInBlockedZone(node)) return;
+                if (isInBlockedZone(node)) {
+                    const protectedProductUiTranslation = getProtectedProductUiTranslation(node, originalVal);
+                    if (protectedProductUiTranslation) {
+                        replaceTextNode(node, protectedProductUiTranslation);
+                    }
+                    return;
+                }
 
                 if (!parentContainersScanned && translateSpecialContainers(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
@@ -1630,6 +1690,7 @@ function generateJs() {
                 const valLower = valNorm.toLowerCase();
 
                 const shortcutTrans = translateWithShortcut(valNorm);
+                const versionControlUiTrans = getVersionControlUiTranslation(valNorm);
                 const fragmentedStatusTrans = translateFragmentedStatus(node, originalVal);
                 const questionnaireOptionTrans = translateQuestionnaireOptionLabel(node, valNorm);
                 const commentTimestampTrans = getCommentTimestampTranslation(node, valNorm);
@@ -1659,6 +1720,8 @@ function generateJs() {
                     newVal = deleteTaskConfirmationTrans;
                 } else if (shortcutTrans) {
                     newVal = shortcutTrans;
+                } else if (versionControlUiTrans) {
+                    newVal = versionControlUiTrans;
                 } else if (exploredTrans) {
                     newVal = exploredTrans;
                 } else if (baselineQuotaRefreshTrans) {
