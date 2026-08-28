@@ -177,6 +177,12 @@ function generateJs() {
 
     // Git refs are runtime identifiers, so translate only the bounded UI
     // sentence around them and preserve the ref or remote name verbatim.
+    function getCommitSummaryParts(value) {
+        const normalized = norm(value);
+        const match = normalized.match(/^(?:Commit|提交)\\s*(\\d+)\\s*(?:files?|个文件)\\s*(?:changes?|更改)\\s*to\\s*((?:↗\\s*)?\\S+)$/i);
+        return match ? { count: match[1], target: match[2] } : null;
+    }
+
     function getVersionControlUiTranslation(value) {
         const normalized = norm(value);
         if (/^All changes since the branch point$/i.test(normalized)) {
@@ -188,6 +194,20 @@ function generateJs() {
 
         match = normalized.match(/^Publish (\\S+) to origin$/i);
         if (match) return "将 " + match[1] + " 发布到 origin";
+
+        match = normalized.match(/^Push\\s+(\\d+)\\s+commits?\\s+to\\s+((?:↗\\s*)?\\S+)$/i);
+        if (match) return "将 " + match[1] + " 个提交推送到 " + match[2];
+
+        match = normalized.match(/^Pushed\\s+(\\d+)\\s+commits?\\s+to\\s+((?:↗\\s*)?\\S+)\\.$/i);
+        if (match) return "已将 " + match[1] + " 个提交推送到 " + match[2] + "。";
+
+        match = normalized.match(/^Committed\\s+to\\s+((?:↗\\s*)?\\S+)\\.$/i);
+        if (match) return "已提交到 " + match[1] + "。";
+
+        const commitSummary = getCommitSummaryParts(normalized);
+        if (commitSummary) {
+            return "将 " + commitSummary.count + " 个文件的更改提交到 " + commitSummary.target;
+        }
         return null;
     }
 
@@ -392,12 +412,59 @@ function generateJs() {
         return false;
     }
 
-    function getCommentTimestampTranslation(node, value) {
+    function hasRelativeTimeDescendant(element) {
+        const pending = Array.from(element?.childNodes || []);
+        while (pending.length > 0) {
+            const current = pending.pop();
+            if (current.nodeType === Node.TEXT_NODE) {
+                const text = norm(current.nodeValue);
+                if (/^(?:\\d+\\s*(?:s|m|h|d|w|mo|yr)|\\d+\\s*(?:secs?|seconds?|mins?|minutes?|hrs?|hours?|days?|wks?|weeks?|mos?|months?|yrs?|years?)\\s+ago|\\d+\\s*(?:秒|分钟|小时|天|周|个月|年)前)$/i.test(text)) {
+                    return true;
+                }
+                continue;
+            }
+            if (current.childNodes) pending.push(...current.childNodes);
+        }
+        return false;
+    }
+
+    function isInConversationTimestampContext(node) {
+        let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        for (let depth = 0; current && depth < 10; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+
+            const metadata = [
+                current.className,
+                current.getAttribute?.('id'),
+                current.getAttribute?.('data-testid'),
+                current.getAttribute?.('aria-label'),
+                current.getAttribute?.('title')
+            ].filter(valuePart => typeof valuePart === 'string').join(' ');
+            if (/(?:^|[-_\\s])(?:conversation|cascade)(?:[-_\\s]|$)/i.test(metadata)) return true;
+
+            const text = norm(current.textContent);
+            if (text.length <= 20000) {
+                const hasConversationSections =
+                    /(?:Other Conversations|其他会话)/i.test(text) &&
+                    /(?:Current|当前|Search all conversations|搜索所有会话)/i.test(text);
+                if (hasConversationSections) return true;
+
+                if (hasRelativeTimeDescendant(current)) return true;
+            }
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        return false;
+    }
+
+    function getTimestampNowTranslation(node, value) {
         const normalized = norm(value);
         if (!/^now$/i.test(normalized)) return null;
 
         let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
         let timestampLike = false;
+        let explicitTimestamp = false;
+        let timestampElement = null;
+        let compactRow = null;
         for (let depth = 0; current && depth < 3 && norm(current.textContent) === normalized; depth++) {
             const tag = current.tagName?.toUpperCase();
             const metadata = [
@@ -408,12 +475,37 @@ function generateJs() {
             ].filter(valuePart => typeof valuePart === 'string').join(' ');
             if (tag === 'TIME' || current.hasAttribute?.('datetime') || /(?:^|[-_\\s])(?:time|timestamp|date|muted|secondary|caption)(?:[-_\\s]|$)|(?:^|\\s)text-xs(?:\\s|$)/i.test(metadata)) {
                 timestampLike = true;
+                explicitTimestamp = tag === 'TIME' || current.hasAttribute?.('datetime') || /(?:^|[-_\\s])(?:time|timestamp|date)(?:[-_\\s]|$)/i.test(metadata);
+                timestampElement = current;
                 break;
             }
             current = current.parentElement || (current.getRootNode?.().host ?? null);
         }
-        if (!timestampLike || !isInCommentContext(node)) return null;
-        return "刚刚";
+        if (timestampLike && (explicitTimestamp || isInCommentContext(node))) return "刚刚";
+
+        current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        for (let depth = 0; current && depth < 5; depth++) {
+            const text = norm(current.textContent);
+            if (text !== normalized) {
+                if (text.length <= 240) compactRow = current;
+                break;
+            }
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+
+        // Conversation rows render the title and a muted relative timestamp as
+        // siblings or nested cells. Require both that compact row and a nearby
+        // conversation-list signal so ordinary standalone "now" stays intact.
+        if (!compactRow || !isInConversationTimestampContext(node)) return null;
+        if (timestampLike && timestampElement?.parentElement === compactRow) return "刚刚";
+        return norm(compactRow.textContent) !== normalized ? "刚刚" : null;
+    }
+
+    function getRecentProjectSectionTranslation(node, value) {
+        const normalized = norm(value);
+        const match = normalized.match(/^Recent in\\s+(.+)$/i);
+        if (!match || match[1].length > 160 || !isInConversationTimestampContext(node)) return null;
+        return match[1] + " 中的近期会话";
     }
 
     function isInDeleteTaskDialogContext(node) {
@@ -534,6 +626,101 @@ function generateJs() {
         return nodes;
     }
 
+    // The commit-dialog summary is split around its file count, arrow icon,
+    // and branch name. Reorder only the text nodes in that bounded row; keep
+    // the icon and runtime Git ref nodes intact.
+    function translateCommitSummaryContainer(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        if ((element.textContent || '').length > 240) return false;
+
+        const textNodes = collectTextNodes(element);
+        if (textNodes.length < 2 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+
+        let parts = getCommitSummaryParts(textNodes.map(textNode => textNode.nodeValue || '').join(''));
+
+        const nonEmptyIndexes = textNodes
+            .map((textNode, index) => norm(textNode.nodeValue) ? index : -1)
+            .filter(index => index >= 0);
+        if (nonEmptyIndexes.length < 2) return false;
+
+        // React may update only the count or restore one English fragment
+        // after this row was translated. Recover the current count from that
+        // bounded intermediate node, then clear only known source fragments.
+        if (!parts) {
+            const prefixIndex = nonEmptyIndexes[0];
+            const targetIndex = nonEmptyIndexes[nonEmptyIndexes.length - 1];
+            const prefixMatch = norm(textNodes[prefixIndex].nodeValue)
+                .match(/^将\\s*(\\d+)\\s*个文件的更改提交到$/);
+            const intermediateNodes = textNodes.slice(prefixIndex + 1, targetIndex);
+            const hasOnlyCommitFragments = intermediateNodes.every(textNode => {
+                const text = norm(textNode.nodeValue);
+                return !text || /^(?:\\d+|to|changes?|更改|files?|个文件|↗|↑)$/i.test(text);
+            });
+            if (prefixMatch && hasOnlyCommitFragments) {
+                const refreshedCount = intermediateNodes
+                    .map(textNode => norm(textNode.nodeValue))
+                    .find(text => /^\\d+$/.test(text));
+                parts = {
+                    count: refreshedCount || prefixMatch[1],
+                    target: norm(textNodes[targetIndex].nodeValue)
+                };
+            }
+        }
+        if (!parts) return false;
+
+        // Prefer the smallest matching container so sibling rows cannot be
+        // combined when their parent happens to have no additional text.
+        if (Array.from(element.children || []).some(child => {
+            const childNodes = collectTextNodes(child);
+            return childNodes.length > 1 &&
+                !childNodes.some(textNode => isInBlockedZone(textNode)) &&
+                !!getCommitSummaryParts(childNodes.map(textNode => textNode.nodeValue || '').join(''));
+        })) return false;
+
+        const prefixIndex = nonEmptyIndexes[0];
+        const targetIndex = nonEmptyIndexes[nonEmptyIndexes.length - 1];
+        let changed = replaceTextNode(textNodes[prefixIndex], "将 " + parts.count + " 个文件的更改提交到 ");
+        for (let index = prefixIndex + 1; index < targetIndex; index++) {
+            // Some builds render the outbound-arrow glyph as text rather than
+            // SVG. It is product UI, so preserve it just like the icon form.
+            if (/^[↗↑]$/.test(norm(textNodes[index].nodeValue))) continue;
+            changed = replaceTextNode(textNodes[index], '') || changed;
+        }
+        return changed;
+    }
+
+    function translateCommitSummaryTextNode(node, value) {
+        const normalized = norm(value);
+        if (!/^(?:Commit|提交|to|changes?|更改|files?|个文件|\\d+)$/i.test(normalized)) return false;
+
+        if (/^\\d+$/.test(normalized)) {
+            let countContext = node.parentElement;
+            let hasCommitContext = false;
+            for (let depth = 0; countContext && depth < 5; depth++) {
+                if (countContext === document.body || countContext === document.documentElement) break;
+                if ((countContext.childNodes?.length || 0) > 24) break;
+                const contextText = norm(countContext.textContent);
+                if (contextText.length <= 240 &&
+                    /^(?:Commit|提交|将\\s*\\d+\\s*个文件的更改提交到)/i.test(contextText) &&
+                    /(?:files?\\s*changes?|个文件.*更改)/i.test(contextText)) {
+                    hasCommitContext = true;
+                    break;
+                }
+                countContext = countContext.parentElement || (countContext.getRootNode?.().host ?? null);
+            }
+            if (!hasCommitContext) return false;
+        }
+
+        let current = node.parentElement;
+        for (let depth = 0; current && depth < 5; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            if ((current.childNodes?.length || 0) > 24) break;
+            if (translateCommitSummaryContainer(current)) return true;
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        return false;
+    }
+
     const SKILL_PICKER_DISPLAY_ENTRIES = [
         {
             source: 'btw',
@@ -588,6 +775,14 @@ function generateJs() {
                 'Provides a comprehensive guide, quick reference, and sitemap for Google Antigravity (AGY), including the Antigravity CLI (agy), Antigravity 2.0, Antigravity IDE, Python SDK, slash commands, keybindings, and customizations (skills, rules, MCP, sidecars).',
                 "为 Google Antigravity（AGY）提供全面指南、快速参考和网站地图，涵盖 Antigravity CLI（agy）、Antigravity 2.0、Antigravity IDE、Python SDK、斜杠命令、快捷键及个性化定制（技能、规则、MCP 和 Sidecar）。"
             ]
+        },
+        {
+            source: 'generative_ui',
+            display: "生成式界面",
+            descriptions: [
+                'How to render rich interactive HTML widgets inline in the chat or as standalone artifacts. Use this skill when you want to show the user diagrams, data visualizations, interactive controls, educational walkthroughs, or any rich visual content beyond plain text and markdown.',
+                "介绍如何在会话中以内嵌方式呈现丰富的交互式 HTML 小组件，或将其作为独立交付件呈现。当您需要向用户展示图示、数据可视化、交互控件、教学演示，或任何超出纯文本和 Markdown 范畴的丰富可视化内容时，请使用此技能。"
+            ]
         }
     ];
 
@@ -616,6 +811,20 @@ function generateJs() {
 
         const nameNode = textNodes.find(textNode => norm(textNode.nodeValue) === entry.source);
         return nameNode ? replaceTextNode(nameNode, entry.display) : false;
+    }
+
+    function translateSkillPickerNameTextNode(node, value) {
+        const normalized = norm(value);
+        if (!SKILL_PICKER_DISPLAY_ENTRIES.some(entry => entry.source === normalized)) return false;
+
+        // React can replace only the skill-name text node after the row was
+        // translated. The exact-name prefilter keeps this ancestor walk narrow.
+        let current = node.parentElement;
+        for (let depth = 0; current && depth < 4; depth++) {
+            if (translateSkillPickerEntry(current)) return true;
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        return false;
     }
 
     function translateAgentLoadingStatus(element) {
@@ -1197,8 +1406,14 @@ function generateJs() {
         if (textLength <= 800 && /(?:weekly limit|每周配额)/i.test(rawText)) {
             translated = translateQuotaNoticeContainer(element) || translated;
         }
-        if (textLength <= 900 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|Antigravity Customization System|comprehensive guide, quick reference, and sitemap|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进|个性化定制系统的综合指南|全面指南、快速参考和网站地图)/i.test(rawText)) {
+        if (textLength <= 900 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|Antigravity Customization System|comprehensive guide, quick reference, and sitemap|render rich interactive HTML widgets|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进|个性化定制系统的综合指南|全面指南、快速参考和网站地图|交互式 HTML 小组件)/i.test(rawText)) {
             translated = translateSkillPickerEntry(element) || translated;
+        }
+        if (textLength <= 240 &&
+            /(?:\\bCommit\\b|提交)/i.test(rawText) &&
+            /(?:files?\\s*changes?|个文件.*更改)/i.test(rawText) &&
+            /(?:\\bto\\b|提交到)/i.test(rawText)) {
+            translated = translateCommitSummaryContainer(element) || translated;
         }
         if (textLength <= 80 && /(?:Working|处理中|工作中)/i.test(rawText)) {
             translated = translateAgentLoadingStatus(element) || translated;
@@ -1226,6 +1441,9 @@ function generateJs() {
         if (!normalized) return null;
         if (map.has(normalized)) return map.get(normalized);
         if (lowerMap.has(normalized.toLowerCase())) return lowerMap.get(normalized.toLowerCase());
+
+        const versionControlTranslation = getVersionControlUiTranslation(normalized);
+        if (versionControlTranslation) return versionControlTranslation;
 
         const workingStatusTranslation = getWorkingStatusTranslation(normalized);
         if (workingStatusTranslation) return workingStatusTranslation;
@@ -1678,6 +1896,8 @@ function generateJs() {
                     return;
                 }
 
+                if (translateSkillPickerNameTextNode(node, originalVal)) return;
+                if (translateCommitSummaryTextNode(node, originalVal)) return;
                 if (!parentContainersScanned && translateSpecialContainers(node.parentElement)) return;
                 if (translateCombinedTextChildren(node.parentElement)) return;
 
@@ -1693,7 +1913,8 @@ function generateJs() {
                 const versionControlUiTrans = getVersionControlUiTranslation(valNorm);
                 const fragmentedStatusTrans = translateFragmentedStatus(node, originalVal);
                 const questionnaireOptionTrans = translateQuestionnaireOptionLabel(node, valNorm);
-                const commentTimestampTrans = getCommentTimestampTranslation(node, valNorm);
+                const timestampNowTrans = getTimestampNowTranslation(node, valNorm);
+                const recentProjectSectionTrans = getRecentProjectSectionTranslation(node, valNorm);
                 const deleteTaskConfirmationTrans = getDeleteTaskConfirmationTranslation(node, valNorm);
                 const exploredTrans = translateExploredStatus(valNorm);
                 const baselineQuotaRefreshTrans = getBaselineQuotaRefreshTranslation(valNorm);
@@ -1714,8 +1935,10 @@ function generateJs() {
                     newVal = fragmentedStatusTrans;
                 } else if (questionnaireOptionTrans) {
                     newVal = questionnaireOptionTrans;
-                } else if (commentTimestampTrans) {
-                    newVal = commentTimestampTrans;
+                } else if (timestampNowTrans) {
+                    newVal = timestampNowTrans;
+                } else if (recentProjectSectionTrans) {
+                    newVal = recentProjectSectionTrans;
                 } else if (deleteTaskConfirmationTrans) {
                     newVal = deleteTaskConfirmationTrans;
                 } else if (shortcutTrans) {
