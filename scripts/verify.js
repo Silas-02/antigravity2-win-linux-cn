@@ -331,7 +331,7 @@ function main() {
             console.log('[跳过] 未提供 --preload，未执行官方 preload 合并编译');
         }
 
-        const regression = runStep('渲染层 DOM 回归测试', () => {
+        const regression = runStep('渲染层核心安全契约', () => {
             const result = runRendererRegression(generatedSource);
             assertCondition(typeof result?.assertions === 'number' && result.assertions > 0, '回归测试未执行任何断言');
             return result;

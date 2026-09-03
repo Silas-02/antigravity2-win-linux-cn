@@ -2,13 +2,8 @@
 
 const vm = require('vm');
 
-class MutationObserverStormError extends Error {
-    constructor(message = 'MutationObserver cascading depth exceeded limit of 10') {
-        super(message);
-        this.name = 'MutationObserverStormError';
-    }
-}
-
+// Purpose-built synchronous harness for renderer safety contracts. It models
+// only the DOM APIs used here and is not a browser-compatibility substitute.
 function createFakeDomEnvironment(generatedSource) {
     const activeObservers = new Set();
     const pendingMutations = [];
@@ -308,7 +303,7 @@ function createFakeDomEnvironment(generatedSource) {
                 depth++;
                 if (depth > 10) {
                     pendingMutations.length = 0;
-                    throw new MutationObserverStormError('MutationObserver cascading depth exceeded limit of 10');
+                    throw new Error('Fake DOM mutation cascade exceeded its safety limit');
                 }
                 const currentBatch = pendingMutations.splice(0, pendingMutations.length);
                 for (const observer of activeObservers) {
@@ -428,14 +423,6 @@ function createFakeDomEnvironment(generatedSource) {
         });
     }
 
-    function dispatchAttributes(node, attributeName) {
-        queueMutation({
-            type: 'attributes',
-            target: node,
-            attributeName
-        });
-    }
-
     function mount(node) {
         body.append(node);
         dispatchAdded(node);
@@ -456,19 +443,8 @@ function createFakeDomEnvironment(generatedSource) {
     }
 
     const api = {
-        FakeDocumentFragment,
-        FakeElement,
-        FakeMutationObserver,
-        FakeNode,
-        FakeTextNode,
-        MutationObserver: FakeMutationObserver,
-        MutationObserverStormError,
-        Node: FakeNode,
-        body,
         dispatchAdded,
-        dispatchAttributes,
         dispatchCharacterData,
-        document,
         element(tagName, ...children) {
             return new FakeElement(tagName).append(...children);
         },
@@ -476,15 +452,12 @@ function createFakeDomEnvironment(generatedSource) {
         reset,
         text(value) {
             return new FakeTextNode(value);
-        },
-        triggerDOMContentLoaded,
-        windowListeners
+        }
     };
 
     return api;
 }
 
 module.exports = {
-    MutationObserverStormError,
     createFakeDomEnvironment
 };

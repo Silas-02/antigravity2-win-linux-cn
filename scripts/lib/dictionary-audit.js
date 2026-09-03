@@ -11,10 +11,11 @@ function normalizeDictionaryText(value) {
         .replace(/[“”]/g, '"');
 }
 
-function extractTopLevelObjectKeys(source) {
+function extractTopLevelObjectKeyRecords(source) {
     const keys = [];
     let depth = 0;
     let expectingKey = false;
+    let line = 1;
 
     function readString(start) {
         let escaped = false;
@@ -40,11 +41,15 @@ function extractTopLevelObjectKeys(source) {
 
     for (let index = 0; index < source.length; index++) {
         const character = source[index];
+        if (character === '\n') line++;
         if (/\s/.test(character)) continue;
         if (character === '"') {
             const parsed = readString(index);
             if (depth === 1 && expectingKey) {
-                keys.push(parsed.value);
+                keys.push({
+                    key: parsed.value,
+                    line
+                });
                 expectingKey = false;
             }
             index = parsed.end;
@@ -66,6 +71,10 @@ function extractTopLevelObjectKeys(source) {
     return keys;
 }
 
+function extractTopLevelObjectKeys(source) {
+    return extractTopLevelObjectKeyRecords(source).map(record => record.key);
+}
+
 function extractPlaceholders(text) {
     const matches = [];
     const printfMatches = text.match(/%(?:\d+\$)?[sdf]/g);
@@ -84,6 +93,47 @@ function checkPlaceholderSymmetry(source, translation) {
         return [`占位符不匹配：原文 [${src.join(', ')}] 与译文 [${dst.join(', ')}]`];
     }
     return [];
+}
+
+function extractProtectedTokens(text) {
+    const tokens = [];
+    const value = String(text || '');
+
+    for (const match of value.matchAll(/https?:\/\/[^\s<>"'`]+/g)) {
+        const url = match[0].replace(/[.,!?;:，。！？；：)）]+$/, '');
+        tokens.push(`url:${url}`);
+    }
+    for (const match of value.matchAll(/`[^`\r\n]+`/g)) {
+        tokens.push(`code:${match[0]}`);
+    }
+    for (const match of value.matchAll(/(?:^|\s)(--[a-z0-9][a-z0-9-]*)\b/gi)) {
+        tokens.push(`option:${match[1]}`);
+    }
+    for (const match of value.matchAll(/\bv?\d+\.\d+(?:\.\d+)*\b/gi)) {
+        tokens.push(`version:${match[0]}`);
+    }
+    return tokens.sort();
+}
+
+function checkProtectedTokenSymmetry(source, translation) {
+    const src = extractProtectedTokens(source);
+    const dst = extractProtectedTokens(translation);
+    if (src.join('\0') !== dst.join('\0')) {
+        return [`受保护内容不匹配：原文 [${src.join(', ')}] 与译文 [${dst.join(', ')}]`];
+    }
+    return [];
+}
+
+function checkInvisibleCharacters(label, text) {
+    const issues = [];
+    const matches = String(text || '').match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200D\u2060\uFEFF]/g) || [];
+    const codePoints = Array.from(new Set(matches.map(character =>
+        `U+${character.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`
+    )));
+    if (codePoints.length) {
+        issues.push(`${label}包含不可见或控制字符：${codePoints.join(', ')}`);
+    }
+    return issues;
 }
 
 function checkPunctuationMatching(source, translation) {
@@ -197,39 +247,57 @@ function auditDictionaries(rootDir) {
             continue;
         }
 
-        const rawKeys = extractTopLevelObjectKeys(source);
+        const rawKeyRecords = extractTopLevelObjectKeyRecords(source);
         const rawKeyCounts = new Map();
-        for (const key of rawKeys) {
-            rawKeyCounts.set(key, (rawKeyCounts.get(key) || 0) + 1);
+        const keyLines = new Map();
+        for (const { key, line } of rawKeyRecords) {
+            const lines = rawKeyCounts.get(key) || [];
+            lines.push(line);
+            rawKeyCounts.set(key, lines);
+            if (!keyLines.has(key)) keyLines.set(key, line);
         }
-        for (const [key, count] of rawKeyCounts) {
-            if (count > 1) {
-                issues.push(`${file} 重复定义了 ${count} 次原始键：${JSON.stringify(key)}`);
+        for (const [key, lines] of rawKeyCounts) {
+            if (lines.length > 1) {
+                issues.push(
+                    `${file}:${lines.join(',')} 重复定义了 ${lines.length} 次原始键：${JSON.stringify(key)}`
+                );
             }
         }
 
         for (const [source, translation] of Object.entries(dictionary)) {
             entries++;
-            const record = { file, source, translation };
+            const line = keyLines.get(source);
+            const location = line ? `${file}:${line}` : file;
+            const record = { file, line, source, translation };
             const normalizedSource = normalizeDictionaryText(source);
 
             if (!normalizedSource) {
-                issues.push(`${file} 包含空英文键`);
+                issues.push(`${location} 包含空英文键`);
                 continue;
             }
             if (typeof translation !== 'string') {
-                issues.push(`${file}: ${JSON.stringify(source)} 的译文不是字符串`);
+                issues.push(`${location}: ${JSON.stringify(source)} 的译文不是字符串`);
                 continue;
             }
             if (!translation.trim()) {
-                issues.push(`${file}: ${JSON.stringify(source)} 的译文为空`);
+                issues.push(`${location}: ${JSON.stringify(source)} 的译文为空`);
+            }
+
+            for (const issue of checkInvisibleCharacters('原文', source)) {
+                issues.push(`${location}: ${JSON.stringify(source)} -> ${issue}`);
+            }
+            for (const issue of checkInvisibleCharacters('译文', translation)) {
+                issues.push(`${location}: ${JSON.stringify(source)} -> ${issue}`);
             }
 
             const normalizedDuplicate = normalizedKeys.get(normalizedSource);
             if (normalizedDuplicate) {
+                const previousLocation = normalizedDuplicate.line
+                    ? `${normalizedDuplicate.file}:${normalizedDuplicate.line}`
+                    : normalizedDuplicate.file;
                 issues.push(
-                    `规范化重复：${normalizedDuplicate.file}: ${JSON.stringify(normalizedDuplicate.source)} ` +
-                    `与 ${file}: ${JSON.stringify(source)}`
+                    `规范化重复：${previousLocation}: ${JSON.stringify(normalizedDuplicate.source)} ` +
+                    `与 ${location}: ${JSON.stringify(source)}`
                 );
             } else {
                 normalizedKeys.set(normalizedSource, record);
@@ -238,31 +306,39 @@ function auditDictionaries(rootDir) {
             const foldedSource = normalizedSource.toLowerCase();
             const caseDuplicate = caseFoldedKeys.get(foldedSource);
             if (caseDuplicate && normalizeDictionaryText(caseDuplicate.source) !== normalizedSource) {
+                const previousLocation = caseDuplicate.line
+                    ? `${caseDuplicate.file}:${caseDuplicate.line}`
+                    : caseDuplicate.file;
                 issues.push(
-                    `大小写冲突：${caseDuplicate.file}: ${JSON.stringify(caseDuplicate.source)} ` +
-                    `与 ${file}: ${JSON.stringify(source)}`
+                    `大小写冲突：${previousLocation}: ${JSON.stringify(caseDuplicate.source)} ` +
+                    `与 ${location}: ${JSON.stringify(source)}`
                 );
             } else if (!caseDuplicate) {
                 caseFoldedKeys.set(foldedSource, record);
             }
 
             if (normalizedSource === normalizeDictionaryText(translation)) {
-                issues.push(`${file}: ${JSON.stringify(source)} 的原文与译文相同`);
+                issues.push(`${location}: ${JSON.stringify(source)} 的原文与译文相同`);
             }
 
             const placeholderIssues = checkPlaceholderSymmetry(source, translation);
             for (const issue of placeholderIssues) {
-                issues.push(`${file}: ${JSON.stringify(source)} -> ${issue}`);
+                issues.push(`${location}: ${JSON.stringify(source)} -> ${issue}`);
+            }
+
+            const protectedTokenIssues = checkProtectedTokenSymmetry(source, translation);
+            for (const issue of protectedTokenIssues) {
+                issues.push(`${location}: ${JSON.stringify(source)} -> ${issue}`);
             }
 
             const punctuationIssues = checkPunctuationMatching(source, translation);
             for (const issue of punctuationIssues) {
-                issues.push(`${file}: ${JSON.stringify(source)} -> ${issue}`);
+                issues.push(`${location}: ${JSON.stringify(source)} -> ${issue}`);
             }
 
             const terminologyIssues = checkTerminology(source, translation);
             for (const issue of terminologyIssues) {
-                issues.push(`${file}: ${JSON.stringify(source)} -> ${issue}`);
+                issues.push(`${location}: ${JSON.stringify(source)} -> ${issue}`);
             }
         }
     }
@@ -286,10 +362,13 @@ function auditDictionaries(rootDir) {
 
 module.exports = {
     auditDictionaries,
+    checkInvisibleCharacters,
     checkPlaceholderSymmetry,
+    checkProtectedTokenSymmetry,
     checkPunctuationMatching,
     checkTerminology,
     extractPlaceholders,
+    extractProtectedTokens,
     extractTopLevelObjectKeys,
     normalizeDictionaryText
 };
