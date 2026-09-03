@@ -208,6 +208,40 @@ function generateJs() {
         if (commitSummary) {
             return "将 " + commitSummary.count + " 个文件的更改提交到 " + commitSummary.target;
         }
+
+        if (map.has(normalized)) return map.get(normalized);
+        if (lowerMap.has(normalized.toLowerCase())) return lowerMap.get(normalized.toLowerCase());
+
+        const fileStatusMatch = normalized.match(/^(.+?)\\s*\\((uncommitted|unstaged|staged|untracked|modified|deleted|added|all agent edits|agent edits)\\)$/i);
+        if (fileStatusMatch) {
+            const rawPrefix = fileStatusMatch[1].trim();
+            if (/^(?:git|npm|pnpm|yarn|bun|node|cargo|go|python|bash|sh|zsh)\\s/i.test(rawPrefix)) return null;
+            if (/["'<>|?*]/.test(rawPrefix)) return null;
+            if (/\\s-[a-zA-Z]/.test(rawPrefix)) return null;
+            const isCategory = /^(?:All files|Added|Deleted|Modified|Untracked)$/i.test(rawPrefix);
+            const hasExtension = /\\.[a-zA-Z0-9_-]{1,12}$/i.test(rawPrefix);
+            const hasPathSep = /[\\/\\\\]/.test(rawPrefix);
+            if (isCategory || hasExtension || hasPathSep) {
+                const tag = fileStatusMatch[2].toLowerCase();
+                const tagMap = {
+                    'uncommitted': '(未提交)',
+                    'unstaged': '(未暂存)',
+                    'staged': '(已暂存)',
+                    'untracked': '(未跟踪)',
+                    'modified': '(已修改)',
+                    'deleted': '(已删除)',
+                    'added': '(已添加)',
+                    'all agent edits': '(智能体的所有修改)',
+                    'agent edits': '(智能体修改)'
+                };
+                if (tagMap[tag]) {
+                    const translatedPrefix = map.get(rawPrefix)
+                        || lowerMap.get(rawPrefix.toLowerCase())
+                        || rawPrefix;
+                    return translatedPrefix + " " + tagMap[tag];
+                }
+            }
+        }
         return null;
     }
 
@@ -295,6 +329,18 @@ function generateJs() {
         return null;
     }
 
+    function getSearchingStatusTranslation(value) {
+        if (!value) return null;
+        const normalized = norm(value).replace(/[\\u200B-\\u200D\\uFEFF]/g, '');
+        if (/^Searching(?:\\s*\\.){1,3}$/i.test(normalized) || /^Searching\\s*…$/i.test(normalized) || /^Searching\\s*\\.{3,}$/i.test(normalized) || /^Searching$/i.test(normalized)) {
+            return "正在搜索...";
+        }
+        if (/^No\\s+suggestions(?:\\.|\\b)/i.test(normalized)) {
+            return "无建议。";
+        }
+        return null;
+    }
+
     function getQuotaDurationTranslation(value) {
         const normalized = norm(value);
         if (/^less than a minute$/i.test(normalized)) return "不到 1 分钟";
@@ -373,31 +419,85 @@ function generateJs() {
     // comment bodies, file names, and other descendants remain untouched.
     function getProtectedProductUiTranslation(node, value) {
         const normalized = norm(value);
-        if (normalized.toLowerCase() !== 'commented on:') return null;
+        const lower = normalized.toLowerCase();
 
-        const label = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-        if (!label || label.tagName?.toUpperCase() !== 'SPAN') return null;
+        if (lower === 'commented on:') {
+            const label = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+            if (!label || label.tagName?.toUpperCase() !== 'SPAN') return null;
 
-        const labelClass = typeof label.className === 'string' ? label.className : '';
-        if (!labelClass.includes('text-sm') || !labelClass.includes('text-secondary-foreground')) return null;
+            const labelClass = typeof label.className === 'string' ? label.className : '';
+            if (!labelClass.includes('text-sm') || !labelClass.includes('text-secondary-foreground')) return null;
 
-        const row = label.parentElement;
-        const rowClass = typeof row?.className === 'string' ? row.className : '';
-        if (!rowClass.includes('items-center') || !rowClass.includes('flex-wrap')) return null;
+            const row = label.parentElement;
+            const rowClass = typeof row?.className === 'string' ? row.className : '';
+            if (!rowClass.includes('items-center') || !rowClass.includes('flex-wrap')) return null;
 
-        let current = row;
-        let userInput = null;
-        while (current) {
-            if (current.getAttribute?.('data-testid') === 'user-input-step') {
-                userInput = current;
+            let current = row;
+            let userInput = null;
+            while (current) {
+                if (current.getAttribute?.('data-testid') === 'user-input-step') {
+                    userInput = current;
+                    break;
+                }
+                current = current.parentElement || (current.getRootNode?.().host ?? null);
+            }
+            if (!userInput) return null;
+
+            if (map.has(normalized)) return map.get(normalized);
+            return lowerMap.get(lower) ?? null;
+        }
+
+        let searchingContainer = null;
+        let p = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        for (let depth = 0; p && depth < 4; depth++) {
+            const pText = norm(p.textContent);
+            if (/^Searching(?:\\s*\\.){1,3}$/i.test(pText) || /^Searching\\s*…$/i.test(pText)) {
+                searchingContainer = p;
                 break;
             }
-            current = current.parentElement || (current.getRootNode?.().host ?? null);
+            if (!searchingContainer && getSearchingStatusTranslation(pText)) {
+                searchingContainer = p;
+            }
+            p = p.parentElement || (p.parentNode && p.parentNode.host);
         }
-        if (!userInput) return null;
 
-        if (map.has(normalized)) return map.get(normalized);
-        return lowerMap.get(normalized.toLowerCase()) ?? null;
+        const searchingTrans = (searchingContainer ? getSearchingStatusTranslation(searchingContainer.textContent) : null)
+            || getSearchingStatusTranslation(value);
+        if (searchingTrans) {
+            let current = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+            let inTerminal = false;
+            let inCodeLine = false;
+            let inPreOrCode = false;
+
+            while (current) {
+                if (current.nodeType === Node.ELEMENT_NODE) {
+                    const tag = current.tagName?.toUpperCase();
+                    if (tag === 'CODE' || tag === 'PRE') inPreOrCode = true;
+                    const className = typeof current.className === 'string' ? current.className : '';
+                    if (className.includes('terminal') || className.includes('xterm') || className.includes('output-view') || className.includes('debug-console')) inTerminal = true;
+                    if (className.includes('view-line')) inCodeLine = true;
+                }
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+            }
+
+            if (!inTerminal && !inCodeLine && !inPreOrCode) {
+                const targetContainer = searchingContainer || node.parentElement;
+                if (targetContainer && norm(targetContainer.textContent) !== norm(value)) {
+                    const siblings = collectTextNodes(targetContainer);
+                    const searchingIdx = siblings.findIndex(t => /Searching|正在搜索/i.test(norm(t.nodeValue)));
+                    if (searchingIdx >= 0) {
+                        for (let i = 0; i < siblings.length; i++) {
+                            if (siblings[i] !== node) {
+                                replaceTextNode(siblings[i], i === searchingIdx ? searchingTrans : '');
+                            }
+                        }
+                    }
+                }
+                return searchingTrans;
+            }
+        }
+
+        return null;
     }
 
     function isInCommentContext(node) {
@@ -556,6 +656,7 @@ function generateJs() {
     function findPreviousTextNode(node) {
         let current = node;
         while (current) {
+            if (current === document.body || current === document.documentElement) break;
             let sibling = current.previousSibling;
             while (sibling) {
                 const found = findLastTextNode(sibling);
@@ -630,18 +731,25 @@ function generateJs() {
     // and branch name. Reorder only the text nodes in that bounded row; keep
     // the icon and runtime Git ref nodes intact.
     function translateCommitSummaryContainer(element) {
-        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return false;
         if ((element.textContent || '').length > 240) return false;
 
+        const isElementBlocked = isInBlockedZone(element);
         const textNodes = collectTextNodes(element);
-        if (textNodes.length < 2 || textNodes.some(textNode => isInBlockedZone(textNode))) return false;
+        if (textNodes.length < 2) return false;
 
+        const isBlocked = isElementBlocked || textNodes.some(textNode => isInBlockedZone(textNode));
         let parts = getCommitSummaryParts(textNodes.map(textNode => textNode.nodeValue || '').join(''));
 
         const nonEmptyIndexes = textNodes
             .map((textNode, index) => norm(textNode.nodeValue) ? index : -1)
             .filter(index => index >= 0);
         if (nonEmptyIndexes.length < 2) return false;
+
+        const lastNonEmptyVal = norm(textNodes[nonEmptyIndexes[nonEmptyIndexes.length - 1]].nodeValue);
+        if (/^(?:to|changes?|更改|files?|个文件)$/i.test(lastNonEmptyVal)) {
+            return false;
+        }
 
         // React may update only the count or restore one English fragment
         // after this row was translated. Recover the current count from that
@@ -668,6 +776,10 @@ function generateJs() {
         }
         if (!parts) return false;
 
+        if (isBlocked) {
+            return 'skipped';
+        }
+
         // Prefer the smallest matching container so sibling rows cannot be
         // combined when their parent happens to have no additional text.
         if (Array.from(element.children || []).some(child => {
@@ -686,7 +798,7 @@ function generateJs() {
             if (/^[↗↑]$/.test(norm(textNodes[index].nodeValue))) continue;
             changed = replaceTextNode(textNodes[index], '') || changed;
         }
-        return changed;
+        return true;
     }
 
     function translateCommitSummaryTextNode(node, value) {
@@ -715,7 +827,8 @@ function generateJs() {
         for (let depth = 0; current && depth < 5; depth++) {
             if (current === document.body || current === document.documentElement) break;
             if ((current.childNodes?.length || 0) > 24) break;
-            if (translateCommitSummaryContainer(current)) return true;
+            const res = translateCommitSummaryContainer(current);
+            if (res) return true;
             current = current.parentElement || (current.getRootNode?.().host ?? null);
         }
         return false;
@@ -758,6 +871,17 @@ function generateJs() {
             descriptions: [
                 'Reflect on recent successes or corrections to capture reusable skills or rules.',
                 "反思最近的成功或改进，以捕获可复用的技能或规则。"
+            ]
+        },
+        {
+            source: 'boost',
+            display: "多智能体编排",
+            descriptions: [
+                'Invoke the Boost multi-agent orchestrator for complex tasks',
+                'Invoke the Boost multi-agent orchestrator for complex tasks.',
+                "调用 Boost 多智能体编排器处理复杂任务",
+                "调用 Boost 多智能体编排器处理复杂任务.",
+                "调用 Boost 多智能体编排器处理复杂任务。"
             ]
         },
         {
@@ -1386,6 +1510,101 @@ function generateJs() {
         return true;
     }
 
+    function translateSettingOverrides(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
+        const rawText = element.textContent || '';
+        if (!/(?:Modified\\s+in|Also\\s+modified\\s+in|修改于|也修改于)/i.test(rawText)) return false;
+
+        let targetContainer = null;
+        let current = element;
+        for (let depth = 0; current && depth < 4; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            if (current.nodeType === Node.ELEMENT_NODE &&
+                /(?:^|\\s)inline-block(?:\\s|$)/.test(current.className || '') &&
+                /(?:Modified\\s+in|Also\\s+modified\\s+in|修改于|也修改于)/i.test(current.textContent || '')) {
+                targetContainer = current;
+                break;
+            }
+            current = current.parentElement || (current.getRootNode?.().host ?? null);
+        }
+        if (!targetContainer) {
+            targetContainer = element;
+        }
+
+        const textNodes = collectTextNodes(targetContainer);
+        if (textNodes.length === 0) return false;
+
+        const prefixIndex = textNodes.findIndex(node => /^(?:Also\\s+modified|Modified)\\s+in$/i.test(norm(node.nodeValue)));
+        const alreadyPrefixIndex = prefixIndex >= 0 ? prefixIndex : textNodes.findIndex(node => /^(?:也修改于|修改于)$/i.test(norm(node.nodeValue)));
+        const activePrefixIndex = prefixIndex >= 0 ? prefixIndex : alreadyPrefixIndex;
+        if (activePrefixIndex < 0) return false;
+
+        let isAlso = false;
+        const prefixVal = norm(textNodes[activePrefixIndex].nodeValue);
+        if (/^Also/i.test(prefixVal) || /^也修改于$/i.test(prefixVal)) {
+            isAlso = true;
+        }
+
+        let translated = false;
+        const targetPrefix = (isAlso ? "也修改于" : "修改于") + " ";
+        if (textNodes[activePrefixIndex].nodeValue !== targetPrefix) {
+            replaceTextNode(textNodes[activePrefixIndex], targetPrefix);
+            translated = true;
+        }
+
+        for (let i = activePrefixIndex + 1; i < textNodes.length; i++) {
+            const tNode = textNodes[i];
+            const val = norm(tNode.nodeValue);
+            if (!val) continue;
+
+            const countMatch = val.match(/^(\\d+)\\s*(?:projects?|个?项目|workspaces?|个?工作区)\\s*$/i);
+            if (countMatch) {
+                const countTrans = countMatch[1] + " 个项目";
+                if (tNode.nodeValue !== countTrans) {
+                    replaceTextNode(tNode, countTrans);
+                    translated = true;
+                }
+                if (i + 1 < textNodes.length) {
+                    const nextVal = norm(textNodes[i + 1].nodeValue);
+                    if (/^(?:projects?|个?项目|workspaces?|个?工作区)$/i.test(nextVal)) {
+                        replaceTextNode(textNodes[i + 1], '');
+                        translated = true;
+                    }
+                }
+                break;
+            }
+
+            if (/^\\d+$/.test(val) && i + 1 < textNodes.length) {
+                const nextVal = norm(textNodes[i + 1].nodeValue);
+                if (/^(?:projects?|个?项目|workspaces?|个?工作区)$/i.test(nextVal)) {
+                    const countTrans = val + " 个项目";
+                    replaceTextNode(tNode, countTrans);
+                    replaceTextNode(textNodes[i + 1], '');
+                    translated = true;
+                    break;
+                }
+            }
+
+            if (/^untitled\\s+project$/i.test(val)) {
+                if (tNode.nodeValue !== '无标题项目') {
+                    replaceTextNode(tNode, '无标题项目');
+                    translated = true;
+                }
+                break;
+            }
+
+            if (/^outside\\s+of\\s+project$/i.test(val)) {
+                if (tNode.nodeValue !== '项目外部') {
+                    replaceTextNode(tNode, '项目外部');
+                    translated = true;
+                }
+                break;
+            }
+        }
+
+        return translated;
+    }
+
     function translateSpecialContainers(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         if (!element.childNodes || element.childNodes.length === 0) return false;
@@ -1393,6 +1612,10 @@ function generateJs() {
         const rawText = element.textContent || '';
         const textLength = rawText.length;
         let translated = false;
+
+        if (textLength <= 160 && /(?:(?:Also\\s+modified|Modified)\\s+in|修改于|也修改于)/i.test(rawText)) {
+            translated = translateSettingOverrides(element) || translated;
+        }
 
         if (textLength <= 300 && /(?:archived conversations?|已归档.*(?:会话|对话)|^(?:History|历史记录)[.。]?$)/i.test(rawText.trim())) {
             translated = translateArchivedConversationNotice(element) || translated;
@@ -1406,14 +1629,14 @@ function generateJs() {
         if (textLength <= 800 && /(?:weekly limit|每周配额)/i.test(rawText)) {
             translated = translateQuotaNoticeContainer(element) || translated;
         }
-        if (textLength <= 900 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|Antigravity Customization System|comprehensive guide, quick reference, and sitemap|render rich interactive HTML widgets|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进|个性化定制系统的综合指南|全面指南、快速参考和网站地图|交互式 HTML 小组件)/i.test(rawText)) {
+        if (textLength <= 900 && /(?:quick question without interrupting|align on a plan|team of agents to autonomously|recent successes or corrections|Boost multi-agent orchestrator|Antigravity Customization System|comprehensive guide, quick reference, and sitemap|render rich interactive HTML widgets|不中断主会话|通过访谈与我对齐|智能体团队自主应对|反思最近的成功或改进|Boost 多智能体编排器|个性化定制系统的综合指南|全面指南、快速参考和网站地图|交互式 HTML 小组件)/i.test(rawText)) {
             translated = translateSkillPickerEntry(element) || translated;
         }
         if (textLength <= 240 &&
             /(?:\\bCommit\\b|提交)/i.test(rawText) &&
             /(?:files?\\s*changes?|个文件.*更改)/i.test(rawText) &&
             /(?:\\bto\\b|提交到)/i.test(rawText)) {
-            translated = translateCommitSummaryContainer(element) || translated;
+            translated = (translateCommitSummaryContainer(element) === true) || translated;
         }
         if (textLength <= 80 && /(?:Working|处理中|工作中)/i.test(rawText)) {
             translated = translateAgentLoadingStatus(element) || translated;
@@ -1808,10 +2031,12 @@ function generateJs() {
                         const normalizedValue = norm(value);
                         const shortcutTranslation = translateWithShortcut(normalizedValue);
                         const versionControlTranslation = getVersionControlUiTranslation(normalizedValue);
-                        if (versionControlTranslation && versionControlTranslation !== value) node.setAttribute(attr, versionControlTranslation);
-                        else if (shortcutTranslation) node.setAttribute(attr, shortcutTranslation);
-                        else if (map.has(normalizedValue)) node.setAttribute(attr, map.get(normalizedValue));
-                        else if (lowerMap.has(normalizedValue.toLowerCase())) node.setAttribute(attr, lowerMap.get(normalizedValue.toLowerCase()));
+                        let target = null;
+                        if (versionControlTranslation) target = versionControlTranslation;
+                        else if (shortcutTranslation) target = shortcutTranslation;
+                        else if (map.has(normalizedValue)) target = map.get(normalizedValue);
+                        else if (lowerMap.has(normalizedValue.toLowerCase())) target = lowerMap.get(normalizedValue.toLowerCase());
+                        if (target && target !== value) node.setAttribute(attr, target);
                     }
                 }
 
@@ -1830,17 +2055,22 @@ function generateJs() {
 
                 if (BLOCKED_TAGS.includes(tag)) {
                     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SVG') {
-                        if (!isInBlockedZone(node.parentElement)) {
-                            for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
-                                const v = node.getAttribute(attr);
-                                if (v) {
+                        for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
+                            const v = node.getAttribute(attr);
+                            if (v) {
+                                const searchingTrans = getSearchingStatusTranslation(v);
+                                if (searchingTrans && searchingTrans !== v) {
+                                    node.setAttribute(attr, searchingTrans);
+                                } else if (!isInBlockedZone(node.parentElement)) {
                                     const t = norm(v);
                                     const shortcutTrans = translateWithShortcut(t);
                                     const versionControlTrans = getVersionControlUiTranslation(t);
-                                    if (versionControlTrans && versionControlTrans !== v) node.setAttribute(attr, versionControlTrans);
-                                    else if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
-                                    else if (map.has(t)) node.setAttribute(attr, map.get(t));
-                                    else if (lowerMap.has(t.toLowerCase())) node.setAttribute(attr, lowerMap.get(t.toLowerCase()));
+                                    let target = null;
+                                    if (versionControlTrans) target = versionControlTrans;
+                                    else if (shortcutTrans) target = shortcutTrans;
+                                    else if (map.has(t)) target = map.get(t);
+                                    else if (lowerMap.has(t.toLowerCase())) target = lowerMap.get(t.toLowerCase());
+                                    if (target && target !== v) node.setAttribute(attr, target);
                                 }
                             }
                         }
@@ -1854,13 +2084,30 @@ function generateJs() {
                     for (const attr of ['placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'aria-label']) {
                         const v = node.getAttribute(attr);
                         if (v) {
-                            const t = norm(v);
-                            const shortcutTrans = translateWithShortcut(t);
-                            const versionControlTrans = getVersionControlUiTranslation(t);
-                            if (versionControlTrans && versionControlTrans !== v) node.setAttribute(attr, versionControlTrans);
-                            else if (shortcutTrans) node.setAttribute(attr, shortcutTrans);
-                            else if (map.has(t)) node.setAttribute(attr, map.get(t));
-                            else if (lowerMap.has(t.toLowerCase())) node.setAttribute(attr, lowerMap.get(t.toLowerCase()));
+                            const searchingTrans = getSearchingStatusTranslation(v);
+                            if (searchingTrans && searchingTrans !== v) {
+                                node.setAttribute(attr, searchingTrans);
+                            } else {
+                                const t = norm(v);
+                                const shortcutTrans = translateWithShortcut(t);
+                                const versionControlTrans = getVersionControlUiTranslation(t);
+                                let target = null;
+                                if (versionControlTrans) target = versionControlTrans;
+                                else if (shortcutTrans) target = shortcutTrans;
+                                else if (map.has(t)) target = map.get(t);
+                                else if (lowerMap.has(t.toLowerCase())) target = lowerMap.get(t.toLowerCase());
+                                if (target && target !== v) node.setAttribute(attr, target);
+                            }
+                        }
+                    }
+                } else {
+                    for (const attr of ['aria-label', 'title', 'placeholder']) {
+                        const v = node.getAttribute(attr);
+                        if (v) {
+                            const searchingTrans = getSearchingStatusTranslation(v);
+                            if (searchingTrans && searchingTrans !== v) {
+                                node.setAttribute(attr, searchingTrans);
+                            }
                         }
                     }
                 }
@@ -1927,6 +2174,7 @@ function generateJs() {
                 const commandInputStatusTrans = getCommandInputStatusTranslation(valNorm);
                 const relativeTimeTrans = getRelativeTimeTranslation(valNorm);
                 const workingStatusTrans = getWorkingStatusTranslation(valNorm);
+                const searchingStatusTrans = getSearchingStatusTranslation(valNorm);
                 const compactCountLabelTrans = getCompactCountLabelTranslation(valNorm);
                 const artifactTimestampTrans = getArtifactTimestampTranslation(valNorm);
                 const quotaNoticeTrans = getQuotaNoticeTranslation(valNorm);
@@ -1967,6 +2215,8 @@ function generateJs() {
                     newVal = relativeTimeTrans;
                 } else if (workingStatusTrans) {
                     newVal = workingStatusTrans;
+                } else if (searchingStatusTrans) {
+                    newVal = searchingStatusTrans;
                 } else if (compactCountLabelTrans) {
                     newVal = compactCountLabelTrans;
                 } else if (artifactTimestampTrans) {
@@ -1977,6 +2227,24 @@ function generateJs() {
                     newVal = archivedConversationNoticeTrans;
                 } else if (map.has(valNorm)) {
                     newVal = map.get(valNorm);
+                    if ((valNorm === 'Modified in' || valNorm === 'Also modified in') && /\\s$/.test(originalVal)) {
+                        newVal += ' ';
+                    }
+                } else if (/^(?:Also\\s+modified|Modified)\\s+in\\s+(\\d+)\\s*(?:projects?|个?项目)$/i.test(valNorm)) {
+                    const isAlso = /^Also/i.test(valNorm);
+                    newVal = valNorm.replace(/^(?:Also\\s+modified|Modified)\\s+in\\s+(\\d+)\\s*(?:projects?|个?项目)$/i, (m, count) => (isAlso ? "也修改于 " : "修改于 ") + count + " 个项目");
+                } else if (/^(?:Also\\s+modified|Modified)\\s+in\\s+(.+)$/i.test(valNorm)) {
+                    const isAlso = /^Also/i.test(valNorm);
+                    newVal = valNorm.replace(/^(?:Also\\s+modified|Modified)\\s+in\\s+(.+)$/i, (m, target) => {
+                        const targetNorm = norm(target);
+                        let translatedTarget = target;
+                        if (/^untitled\\s+project$/i.test(targetNorm)) {
+                            translatedTarget = "无标题项目";
+                        } else if (/^outside\\s+of\\s+project$/i.test(targetNorm)) {
+                            translatedTarget = "项目外部";
+                        }
+                        return (isAlso ? "也修改于 " : "修改于 ") + translatedTarget;
+                    });
                 } else if (/^Gemini\\s+(.+?)\\s+is now available$/i.test(valNorm)) {
                     newVal = valNorm.replace(/^Gemini\\s+(.+?)\\s+is now available$/i, (m, model) => "Gemini " + model + " 现已可用");
                 } else if (lowerMap.has(valLower)) {

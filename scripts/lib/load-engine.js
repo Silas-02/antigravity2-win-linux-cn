@@ -18,15 +18,23 @@ function loadGenerateJs(rootDir) {
         '\nmodule.exports = { generateJs };\n'
     );
     const moduleBox = { exports: {} };
-    const evaluateModule = new Function(
-        'require',
-        'module',
-        'exports',
-        '__dirname',
-        '__filename',
-        nonInstallingSource
-    );
-    evaluateModule(require, moduleBox, moduleBox.exports, rootDir, enginePath);
+    const sandbox = {
+        require,
+        module: moduleBox,
+        exports: moduleBox.exports,
+        __dirname: rootDir,
+        __filename: enginePath,
+        console,
+        process,
+        Buffer,
+        clearTimeout,
+        setTimeout,
+        clearInterval,
+        setInterval
+    };
+    const context = vm.createContext(sandbox);
+    const script = new vm.Script(nonInstallingSource, { filename: enginePath });
+    script.runInContext(context);
 
     if (typeof moduleBox.exports.generateJs !== 'function') {
         throw new Error('未能从 localization_engine.js 获取 generateJs()');

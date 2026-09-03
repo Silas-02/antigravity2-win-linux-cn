@@ -1,9 +1,42 @@
 'use strict';
 
+const vm = require('vm');
+
+class MutationObserverStormError extends Error {
+    constructor(message = 'MutationObserver cascading depth exceeded limit of 10') {
+        super(message);
+        this.name = 'MutationObserverStormError';
+    }
+}
+
 function createFakeDomEnvironment(generatedSource) {
-    let observerCallback = null;
+    const activeObservers = new Set();
+    const pendingMutations = [];
+    let isFlushing = false;
+
     const documentListeners = new Map();
     const windowListeners = new Map();
+
+    function addListener(map, type, callback) {
+        if (!map.has(type)) {
+            map.set(type, new Set());
+        }
+        map.get(type).add(callback);
+    }
+
+    function removeListener(map, type, callback) {
+        if (map.has(type)) {
+            map.get(type).delete(callback);
+        }
+    }
+
+    function dispatchEvent(map, type, event) {
+        if (map.has(type)) {
+            for (const callback of Array.from(map.get(type))) {
+                callback(event);
+            }
+        }
+    }
 
     class FakeNode {
         constructor(nodeType) {
@@ -31,11 +64,25 @@ function createFakeDomEnvironment(generatedSource) {
             while (current.parentNode) current = current.parentNode;
             return current;
         }
+
+        contains(other) {
+            if (!other) return false;
+            let current = other;
+            while (current) {
+                if (current === this) return true;
+                current = current.parentNode || current.host || null;
+            }
+            return false;
+        }
     }
+
+    FakeNode.ELEMENT_NODE = 1;
+    FakeNode.TEXT_NODE = 3;
+    FakeNode.DOCUMENT_FRAGMENT_NODE = 11;
 
     class FakeTextNode extends FakeNode {
         constructor(value) {
-            super(3);
+            super(FakeNode.TEXT_NODE);
             this._nodeValue = String(value);
             this.writeCount = 0;
         }
@@ -76,7 +123,7 @@ function createFakeDomEnvironment(generatedSource) {
 
     class FakeElement extends FakeNode {
         constructor(tagName = 'div') {
-            super(1);
+            super(FakeNode.ELEMENT_NODE);
             this.tagName = String(tagName).toUpperCase();
             this.childNodes = [];
             this.attributes = new Map();
@@ -105,7 +152,7 @@ function createFakeDomEnvironment(generatedSource) {
         }
 
         get children() {
-            return this.childNodes.filter(node => node.nodeType === 1);
+            return this.childNodes.filter(node => node.nodeType === FakeNode.ELEMENT_NODE);
         }
 
         get textContent() {
@@ -131,6 +178,12 @@ function createFakeDomEnvironment(generatedSource) {
             if (name === 'class') this.className = stringValue;
             this.attributes.set(name, stringValue);
             this.attributeWriteCount++;
+
+            queueMutation({
+                type: 'attributes',
+                target: this,
+                attributeName: name
+            });
         }
 
         matches(selectors) {
@@ -149,7 +202,7 @@ function createFakeDomEnvironment(generatedSource) {
             if (selector !== '*') return [];
             const result = [];
             const visit = node => {
-                if (node.nodeType !== 1) return;
+                if (node.nodeType !== FakeNode.ELEMENT_NODE) return;
                 result.push(node);
                 for (const child of node.childNodes) visit(child);
             };
@@ -166,7 +219,7 @@ function createFakeDomEnvironment(generatedSource) {
 
     class FakeDocumentFragment extends FakeNode {
         constructor(host) {
-            super(11);
+            super(FakeNode.DOCUMENT_FRAGMENT_NODE);
             this.host = host;
             this.childNodes = [];
         }
@@ -183,10 +236,91 @@ function createFakeDomEnvironment(generatedSource) {
 
     class FakeMutationObserver {
         constructor(callback) {
-            observerCallback = callback;
+            this.callback = callback;
+            this.observedTargets = new Map();
+            activeObservers.add(this);
         }
 
-        observe() {}
+        observe(target, options = {}) {
+            this.observedTargets.set(target, {
+                childList: Boolean(options.childList),
+                subtree: Boolean(options.subtree),
+                attributes: Boolean(options.attributes),
+                characterData: Boolean(options.characterData),
+                attributeFilter: options.attributeFilter ? Array.from(options.attributeFilter) : null
+            });
+        }
+
+        disconnect() {
+            this.observedTargets.clear();
+            activeObservers.delete(this);
+        }
+
+        takeRecords() {
+            return [];
+        }
+    }
+
+    function isRecordObservedBy(observer, record) {
+        for (const [target, options] of observer.observedTargets) {
+            const recordTarget = record.target;
+            if (!recordTarget) continue;
+            const isTargetOrDescendant = (target === recordTarget) ||
+                (Boolean(options.subtree) && target.contains(recordTarget));
+            if (!isTargetOrDescendant) continue;
+
+            if (record.type === 'childList') {
+                if (options.childList) return true;
+            } else if (record.type === 'characterData') {
+                if (options.characterData) return true;
+            } else if (record.type === 'attributes') {
+                if (!options.attributes) return false;
+                if (options.attributeFilter && !options.attributeFilter.includes(record.attributeName)) {
+                    return false;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function queueMutation(record) {
+        let anyObserved = false;
+        for (const observer of activeObservers) {
+            if (isRecordObservedBy(observer, record)) {
+                anyObserved = true;
+                break;
+            }
+        }
+        if (!anyObserved) return;
+
+        pendingMutations.push(record);
+        if (!isFlushing) {
+            flushMutations();
+        }
+    }
+
+    function flushMutations() {
+        isFlushing = true;
+        try {
+            let depth = 0;
+            while (pendingMutations.length > 0) {
+                depth++;
+                if (depth > 10) {
+                    pendingMutations.length = 0;
+                    throw new MutationObserverStormError('MutationObserver cascading depth exceeded limit of 10');
+                }
+                const currentBatch = pendingMutations.splice(0, pendingMutations.length);
+                for (const observer of activeObservers) {
+                    const recordsForObserver = currentBatch.filter(record => isRecordObservedBy(observer, record));
+                    if (recordsForObserver.length > 0) {
+                        observer.callback(recordsForObserver, observer);
+                    }
+                }
+            }
+        } finally {
+            isFlushing = false;
+        }
     }
 
     const html = new FakeElement('html');
@@ -201,43 +335,105 @@ function createFakeDomEnvironment(generatedSource) {
             return new FakeTextNode(value);
         },
         addEventListener(type, callback) {
-            documentListeners.set(type, callback);
+            addListener(documentListeners, type, callback);
+        },
+        removeEventListener(type, callback) {
+            removeListener(documentListeners, type, callback);
         }
-    };
-    const window = {
-        addEventListener(type, callback) {
-            windowListeners.set(type, callback);
-        }
-    };
-    const Node = {
-        ELEMENT_NODE: 1,
-        TEXT_NODE: 3,
-        DOCUMENT_FRAGMENT_NODE: 11
     };
 
-    const executeInjection = new Function(
-        'document',
-        'window',
-        'MutationObserver',
-        'Element',
-        'Node',
-        generatedSource
-    );
-    executeInjection(document, window, FakeMutationObserver, FakeElement, Node);
-    if (typeof observerCallback !== 'function') {
+    const window = {
+        addEventListener(type, callback) {
+            addListener(windowListeners, type, callback);
+        },
+        removeEventListener(type, callback) {
+            removeListener(windowListeners, type, callback);
+        }
+    };
+
+    const sandbox = {
+        document,
+        window,
+        MutationObserver: FakeMutationObserver,
+        Element: FakeElement,
+        Node: FakeNode,
+        console,
+        setTimeout,
+        clearTimeout,
+        setInterval,
+        clearInterval,
+        Map,
+        Set,
+        WeakMap,
+        WeakSet,
+        Array,
+        Object,
+        String,
+        Number,
+        Boolean,
+        RegExp,
+        Error,
+        TypeError,
+        RangeError,
+        Math,
+        Date,
+        JSON,
+        parseInt,
+        parseFloat,
+        isNaN,
+        isFinite,
+        decodeURI,
+        decodeURIComponent,
+        encodeURI,
+        encodeURIComponent
+    };
+    sandbox.window.window = sandbox.window;
+    sandbox.window.document = document;
+    sandbox.window.MutationObserver = FakeMutationObserver;
+    sandbox.window.Element = FakeElement;
+    sandbox.window.Node = FakeNode;
+
+    const context = vm.createContext(sandbox);
+    const script = new vm.Script(generatedSource, { filename: 'generated-localization-injection.js' });
+    script.runInContext(context);
+
+    if (activeObservers.size === 0) {
         throw new Error('生成的注入代码没有注册 MutationObserver');
     }
 
+    function triggerDOMContentLoaded() {
+        document.readyState = 'interactive';
+        dispatchEvent(documentListeners, 'DOMContentLoaded', { type: 'DOMContentLoaded' });
+        document.readyState = 'complete';
+        dispatchEvent(windowListeners, 'load', { type: 'load' });
+    }
+
+    // Trigger DOMContentLoaded immediately after injection to ensure startEngine() registers document.body to the observer
+    triggerDOMContentLoaded();
+
     function dispatchAdded(node) {
-        observerCallback([{ type: 'childList', addedNodes: [node] }]);
+        const target = node.parentNode || null;
+        queueMutation({
+            type: 'childList',
+            target,
+            addedNodes: [node],
+            removedNodes: []
+        });
     }
 
     function dispatchCharacterData(node) {
-        observerCallback([{ type: 'characterData', target: node }]);
+        queueMutation({
+            type: 'characterData',
+            target: node
+        });
     }
 
-    function dispatchAttributes(node) {
-        observerCallback([{ type: 'attributes', target: node }]);
+    function dispatchAttributes(node, attributeName) {
+        queueMutation({
+            type: 'attributes',
+            target: node,
+            attributeName
+        });
     }
 
     function mount(node) {
@@ -246,14 +442,28 @@ function createFakeDomEnvironment(generatedSource) {
         return node;
     }
 
-    function triggerDOMContentLoaded() {
-        documentListeners.get('DOMContentLoaded')?.();
+    function reset() {
+        pendingMutations.length = 0;
+        for (const child of Array.from(body.childNodes)) {
+            child.parentNode = null;
+            child.parentElement = null;
+        }
+        body.childNodes = [];
+        body.className = '';
+        body.attributes.clear();
+        body.attributeWriteCount = 0;
+        return api;
     }
 
-    return {
+    const api = {
         FakeDocumentFragment,
         FakeElement,
+        FakeMutationObserver,
+        FakeNode,
         FakeTextNode,
+        MutationObserver: FakeMutationObserver,
+        MutationObserverStormError,
+        Node: FakeNode,
         body,
         dispatchAdded,
         dispatchAttributes,
@@ -263,14 +473,18 @@ function createFakeDomEnvironment(generatedSource) {
             return new FakeElement(tagName).append(...children);
         },
         mount,
+        reset,
         text(value) {
             return new FakeTextNode(value);
         },
         triggerDOMContentLoaded,
         windowListeners
     };
+
+    return api;
 }
 
 module.exports = {
+    MutationObserverStormError,
     createFakeDomEnvironment
 };

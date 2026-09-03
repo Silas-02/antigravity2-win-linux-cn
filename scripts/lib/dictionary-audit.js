@@ -66,6 +66,101 @@ function extractTopLevelObjectKeys(source) {
     return keys;
 }
 
+function extractPlaceholders(text) {
+    const matches = [];
+    const printfMatches = text.match(/%(?:\d+\$)?[sdf]/g);
+    if (printfMatches) matches.push(...printfMatches);
+    const doubleBraceMatches = text.match(/\{\{[a-zA-Z0-9_-]+\}\}/g);
+    if (doubleBraceMatches) matches.push(...doubleBraceMatches);
+    const singleBraceMatches = text.match(/(?<!\{)\{[a-zA-Z0-9_-]+\}(?!\})/g);
+    if (singleBraceMatches) matches.push(...singleBraceMatches);
+    return matches.sort();
+}
+
+function checkPlaceholderSymmetry(source, translation) {
+    const src = extractPlaceholders(source);
+    const dst = extractPlaceholders(translation);
+    if (src.join(',') !== dst.join(',')) {
+        return [`占位符不匹配：原文 [${src.join(', ')}] 与译文 [${dst.join(', ')}]`];
+    }
+    return [];
+}
+
+function checkPunctuationMatching(source, translation) {
+    const issues = [];
+    const trimmedSource = source.trim();
+    const trimmedTranslation = translation.trim();
+
+    const ellipsisPattern = /(?:\.{3,}|…|……|\.\s*\.\s*\.)$/;
+    const srcHasEllipsis = ellipsisPattern.test(trimmedSource);
+    const dstHasEllipsis = ellipsisPattern.test(trimmedTranslation);
+    if (srcHasEllipsis !== dstHasEllipsis) {
+        issues.push(`省略号不匹配：原文末尾${srcHasEllipsis ? '有' : '无'}省略号，译文末尾${dstHasEllipsis ? '有' : '无'}省略号`);
+    }
+
+    const colonPattern = /[:：]\s*$/;
+    const srcHasColon = colonPattern.test(trimmedSource);
+    const dstHasColon = colonPattern.test(trimmedTranslation);
+    if (srcHasColon && !dstHasColon) {
+        issues.push('冒号不匹配：原文末尾有冒号，译文末尾缺少冒号');
+    }
+
+    const questionPattern = /[?？]\s*$/;
+    const srcHasQuestion = questionPattern.test(trimmedSource);
+    const dstHasQuestion = questionPattern.test(trimmedTranslation);
+    if (srcHasQuestion !== dstHasQuestion) {
+        issues.push(`问号不匹配：原文末尾${srcHasQuestion ? '有' : '无'}问号，译文末尾${dstHasQuestion ? '有' : '无'}问号`);
+    }
+
+    const exclamationPattern = /[!！]\s*$/;
+    const srcHasExclamation = exclamationPattern.test(trimmedSource);
+    const dstHasExclamation = exclamationPattern.test(trimmedTranslation);
+    if (srcHasExclamation !== dstHasExclamation) {
+        issues.push(`感叹号不匹配：原文末尾${srcHasExclamation ? '有' : '无'}感叹号，译文末尾${dstHasExclamation ? '有' : '无'}感叹号`);
+    }
+
+    return issues;
+}
+
+function checkTerminology(source, translation) {
+    const issues = [];
+    if (/\bagents?\b/i.test(source) && !/user-agent|proxy/i.test(source)) {
+        if (/代理/.test(translation)) {
+            issues.push('agent 术语违规（使用了“代理”，应为“智能体”）');
+        }
+        if (/[\u4e00-\u9fa5]/.test(translation) && /\bAgents?\b/.test(translation) && !/User-Agent|Subagent/i.test(translation)) {
+            issues.push('agent 术语未翻译（残留“Agent”，应为“智能体”）');
+        }
+    }
+    if (/\bworkspaces?\b/i.test(source) && !/\bprojects?\b/i.test(source)) {
+        if (/项目/.test(translation)) {
+            issues.push('workspace 术语混淆（译文中包含“项目”，应为“工作区”）');
+        }
+        if (/工作空间/.test(translation)) {
+            issues.push('workspace 术语违规（使用了“工作空间”，应为“工作区”）');
+        }
+    }
+    if (/\bprojects?\b/i.test(source) && !/\bworkspaces?\b/i.test(source)) {
+        if (/工作区/.test(translation)) {
+            issues.push('project 术语混淆（译文中包含“工作区”，应为“项目”）');
+        }
+        if (/工程/.test(translation)) {
+            issues.push('project 术语违规（使用了“工程”，应为“项目”）');
+        }
+    }
+    if (/\bworktrees?\b/i.test(source)) {
+        if (/工作区/.test(translation)) {
+            issues.push('worktree 术语混淆（译文中包含“工作区”，应为“工作树”）');
+        }
+    }
+    if (/\bartifacts?\b/i.test(source) && !/build artifact/i.test(source)) {
+        if (/工件|制品/.test(translation) && !/人工件/.test(translation)) {
+            issues.push('artifact 术语违规（使用了“工件/制品”，应为“交付件”）');
+        }
+    }
+    return issues;
+}
+
 function auditDictionaries(rootDir) {
     const dictsDir = path.join(rootDir, 'dicts');
     if (!fs.existsSync(dictsDir)) {
@@ -154,6 +249,21 @@ function auditDictionaries(rootDir) {
             if (normalizedSource === normalizeDictionaryText(translation)) {
                 issues.push(`${file}: ${JSON.stringify(source)} 的原文与译文相同`);
             }
+
+            const placeholderIssues = checkPlaceholderSymmetry(source, translation);
+            for (const issue of placeholderIssues) {
+                issues.push(`${file}: ${JSON.stringify(source)} -> ${issue}`);
+            }
+
+            const punctuationIssues = checkPunctuationMatching(source, translation);
+            for (const issue of punctuationIssues) {
+                issues.push(`${file}: ${JSON.stringify(source)} -> ${issue}`);
+            }
+
+            const terminologyIssues = checkTerminology(source, translation);
+            for (const issue of terminologyIssues) {
+                issues.push(`${file}: ${JSON.stringify(source)} -> ${issue}`);
+            }
         }
     }
 
@@ -176,6 +286,10 @@ function auditDictionaries(rootDir) {
 
 module.exports = {
     auditDictionaries,
+    checkPlaceholderSymmetry,
+    checkPunctuationMatching,
+    checkTerminology,
+    extractPlaceholders,
     extractTopLevelObjectKeys,
     normalizeDictionaryText
 };

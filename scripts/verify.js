@@ -331,7 +331,11 @@ function main() {
             console.log('[跳过] 未提供 --preload，未执行官方 preload 合并编译');
         }
 
-        const regression = runStep('渲染层 DOM 回归测试', () => runRendererRegression(generatedSource));
+        const regression = runStep('渲染层 DOM 回归测试', () => {
+            const result = runRendererRegression(generatedSource);
+            assertCondition(typeof result?.assertions === 'number' && result.assertions > 0, '回归测试未执行任何断言');
+            return result;
+        });
         console.log(`       ${regression.assertions} 项断言`);
 
         const textReview = runStep('仓库文本无冲突标记、行尾空白或缺失末尾换行', verifyRepositoryText);
