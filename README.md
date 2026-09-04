@@ -1,10 +1,14 @@
 # Antigravity 中文汉化引擎（Windows/Linux）
 
-> **Fork 自**：[qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn) — 感谢原作者 [qqxpee](https://github.com/qqxpee) 的辛勤付出！
+> [!NOTE]
+> **🍎 诚邀社区共建：欢迎提交 macOS (Mac) 端适配 PR！**
+>
+> 目前本项目已稳定支持 Windows 与 Linux。为了让更多开发者受益，我们十分期待补全 **macOS 平台的适配**。
+> 非常欢迎有 Mac 设备或开发环境的小伙伴参与适配与测试！如果您有现成的路径规则、安装/还原脚本或优化建议，诚邀提交 **[Pull Request](https://github.com/Silas-02/antigravity2-win-linux-cn/pulls)**，也欢迎在 **[Issues](https://github.com/Silas-02/antigravity2-win-linux-cn/issues)** 中交流讨论，感谢各位贡献者的支持！
 
 > **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
 >
-> **语言支持**：仅简体中文
+> **语言支持**：简体中文
 >
 > **汉化版本**：v2.12.0
 >
@@ -107,7 +111,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 
 ### 2. 一键安装汉化
 
-1. **完全退出** Antigravity 编程软件。
+1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，安装脚本在执行时也会自动检测并安全关闭其进程）。
 2. 进入解压或克隆出来的 `antigravity2-win-linux-cn` 文件夹：
    - **Windows**：先普通双击 **`双击安装中文汉化.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
    - **Linux**：首次使用先赋予脚本执行权限，然后运行安装命令：
@@ -134,7 +138,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 
 ### 3. 一键卸载还原
 
-1. **完全退出** Antigravity 编程软件。
+1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，还原脚本在执行时也会自动检测并安全关闭其进程）。
 2. 在当前文件夹下：
    - **Windows**：先普通双击 **`双击卸载还原官方英文.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
    - **Linux**：先运行 `./uninstall.sh`；如自动定位失败，可追加 `--install-dir "/path/to/Antigravity"`。仅在提示权限不足时，才在同一命令前加 `sudo`。
@@ -193,32 +197,65 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 
 ### 🔄 更新生效流程
 
-1. **命令 AI 更新**：在对话中通过截图或文字说明汉化需求；AI 会按界面来源选择修改 `dicts/` 词典或 `localization_engine.js` 动态规则。
-2. **退出软件**：**完全退出**您的 Antigravity 软件。
-3. **重新注入**：Windows 先普通双击 `双击安装中文汉化.bat`，Linux 在项目根目录先运行 `./install.sh`；仅在提示权限不足时，分别改用“以管理员身份运行”或 `sudo ./install.sh`。
-4. **重启软件**：重新打开 Antigravity，检查目标界面是否已经正确汉化。
+1. **命令 AI 更新**：在对话中通过截图或文字说明汉化需求；AI 会按界面来源选择修改 `dicts/` 词典或 `localization_engine.js` 动态规则，并执行验证。
+2. **重新注入**：运行安装脚本（Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`；脚本会自动检测并安全关闭正在运行的客户端并完成重包注入）。
+3. **重启软件**：重新打开 Antigravity，检查目标界面是否已经正确汉化。
 
 ---
 
-## 📝 词典自定义指南 (供极客手动使用)
+## 📝 自定义与高级开发指南 (供极客使用)
 
-如果您想手动修改翻译，可以直接打开 `dicts/` 目录下的 JSON 文件。引擎会加载其中全部 JSON 词典：
+根据界面文案的呈现机制，汉化分为**静态固定文本**与**动态/原生规则**两类维护途径：
 
-- **`v2.12.0.json`**：汉化版本 v2.12.0 的核心词典，适配 Antigravity v2.12.0。
-- **`common.json`**：公共基础词汇、侧边栏概览、登录页、常用按钮与权限弹窗等。
-- **`menu_nav.json`**：系统菜单、导航和任务栏菜单。
-- **`page_agents.json`**：Agent、任务与对话相关页面。
-- **`page_mcp_knowledge.json`**：MCP、知识库与相关配置页面。
-- **`page_settings.json`**：详细设置面板和权限二级菜单。
-- **`page_workspaces.json`**：工作区与项目相关页面。
+### 1. 静态固定词条（修改 `dicts/*.json`）
 
-在 JSON 中新增一行，格式如下即可（注意英文逗号）：
+对于界面上不含变量的固定标签、按钮文字、弹窗标题等，直接维护 `dicts/` 下的 JSON 文件：
+
+- **`v2.12.0.json`**：当前版本 v2.12.0 专用词典，适配官方版本迭代的独有界面。
+- **`common.json`**：通用基础词汇、侧边栏概览、登录与引导流程、通用按钮与权限弹窗。
+- **`menu_nav.json`**：系统菜单、顶部导航与状态栏菜单。
+- **`page_agents.json`**：智能体（Agent）、任务及会话管理相关页面。
+- **`page_mcp_knowledge.json`**：MCP 服务器、知识库与扩展配置页面。
+- **`page_settings.json`**：详细参数设置面板与二级权限菜单。
+- **`page_workspaces.json`**：工作区与项目管理相关页面。
+
+在对应 JSON 中新增键值对即可（注意 JSON 规范与英文逗号）：
 
 ```json
 "Original English Text": "您的中文翻译"
 ```
 
-保存后先运行 `node scripts/verify.js`。验证通过并人工检查差异后，再运行安装脚本部署汉化。
+- **匹配机制**：默认文本节点完全一致时翻译；长度 >20 字符的整句支持单词边界保护的子串替换。
+- **安全禁区**：严禁将用户聊天正文、代码、终端输出、URL、快捷键或模型名加入词典。
+
+---
+
+### 2. 动态文案与复杂 DOM 规则（修改 `localization_engine.js`）
+
+如果界面文案包含**动态数字、时间、路径、分支**，或者属于**React 碎片化分拆**与**原生层组件**，修改词典将无法生效，须在 `localization_engine.js` 中编写代码规则：
+
+- **动态变量正则捕获**：
+  - 场景：包含数字、时长或分支名的动态文案（例如 `5m ago`、`Push 2 commits to origin` 等）。
+  - 实现：在引擎对应的动态转换函数（如 `getRelativeTimeTranslation`、`fileStatusMatch` 等）中添加具有严格锚定（`^...$`）和捕获组的正则表达式，返回带参数插值的翻译字符串。
+- **属性与结构化 DOM 拦截**：
+  - 场景：输入框占位符（`placeholder`）、悬停提示（`title`）、无障碍标签（`aria-label`）或跨子节点渲染的复合文本。
+  - 实现：在引擎属性监听列表或特化节点处理逻辑中注册，禁止破坏节点原有的 React 事件挂载与 DOM 结构。
+- **原生层与独立窗口**：
+  - 场景：Electron 原生标题栏（`menu.js`）、系统托盘（`tray.js`）、启动加载动画（`loadingOverlay.js`）及更新检查（`updater.js`）。
+  - 实现：修改引擎中对应的原生代码注入模板。
+
+---
+
+### 3. 本地验证与测试
+
+无论修改词典还是引擎代码，提交前必须执行仓库内置的非安装式机械验证：
+
+```bash
+node scripts/verify.js
+```
+
+- 若修改了动态正则、DOM 契约或保护边界，须在 `tests/renderer-regression.js` 中补充对应的最小安全断言用例。
+- 验证通过并确认无误后，重新运行安装脚本部署生效。
 
 ---
 
@@ -245,9 +282,26 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 
 ### 3）软件官方更新后，汉化失效了怎么办？
 
-* 软件升级时，官方会覆盖 `app.asar` 文件。完全退出软件后重新注入即可：Windows 默认普通双击 `双击安装中文汉化.bat`，Linux 默认在项目根目录运行 `./install.sh`；只有出现权限不足时，才分别改用“以管理员身份运行”或 `sudo ./install.sh`。
+* 软件升级时，官方会覆盖 `app.asar` 文件。重新运行一次安装脚本注入即可（Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`）。
 
-## 🤝 致谢
+## 🤝 致谢与项目关系
 
-- 感谢原作者 [qqxpee](https://github.com/qqxpee) 开发并开源了本汉化项目：[antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)
-- 感谢所有参与测试与反馈的贡献者！
+本项目 Fork 自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)，衷心感谢原作者 **qqxpee** 的开源贡献与开拓性工作！
+
+在此基础上，为了提升汉化长期维护性、系统兼容性与渲染安全边界，本项目进行了深度的工程化重构与迭代，主要特性包括：
+
+1. **跨平台原生支持与脚本体验重构**：
+   - 完备支持 Windows 与 Linux（含 Ubuntu/Debian 等主流发行版），提供开箱即用的一键安装（`install.sh` / `.bat`）与无损还原（`uninstall.sh` / `.bat`）方案。
+   - 引入编码保护（GBK/CRLF 隔离）与权限自适应机制，杜绝 Windows 控制台乱码与 Linux 权限异常。
+
+2. **模块化分词典与高效版本迭代架构**：
+   - 将单体庞大词典解耦为模块化分包（`common`、`menu_nav`、`page_settings`、`page_agents` 等），结合版本独立词典机制（如 `dicts/v2.12.0.json`），大幅提升词条维护效率并保持追溯清晰。
+
+3. **严格的内容隔离与高安全渲染保护边界**：
+   - **用户消息与历史对话绝对隔离**：严格适配客户端的 `data-testid="user-input-step"` 与 `data-ag-localization-skip` 禁区机制，坚决不翻译、不篡改用户提示词正文、聊天历史、代码块与终端输出，防止误译与数据污染。
+   - **分级精准匹配**：结合精确全词匹配与带单词边界保护的长句替换规则，杜绝短词破坏 UI 排版或误伤非界面文本。
+
+4. **健全的非安装式工程化验证体系**：
+   - 内置统一的静态验证与全量词典审计工具（`node scripts/verify.js`）及轻量 DOM 核心契约回归测试（`tests/renderer-regression.js`），可在不触碰客户端的前提下拦截语法、占位符、重复键与渲染安全问题。
+
+再次向原作者及所有参与测试、提交 PR 与反馈的社区贡献者致以诚挚的谢意！
