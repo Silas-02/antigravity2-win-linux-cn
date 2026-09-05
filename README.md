@@ -1,31 +1,31 @@
 # Antigravity 中文汉化引擎（Windows/Linux）
 
 > [!NOTE]
-> **🍎 诚邀社区共建：欢迎提交 macOS (Mac) 端适配 PR！**
+> **🍎 macOS 端适配进展：功能分支已上线测试，欢迎体验与反馈！**
 >
-> 目前本项目已稳定支持 Windows 与 Linux。为了让更多开发者受益，我们十分期待补全 **macOS 平台的适配**。
-> 非常欢迎有 Mac 设备或开发环境的小伙伴参与适配与测试！如果您有现成的路径规则、安装/还原脚本或优化建议，诚邀提交 **[Pull Request](https://github.com/Silas-02/antigravity2-win-linux-cn/pulls)**，也欢迎在 **[Issues](https://github.com/Silas-02/antigravity2-win-linux-cn/issues)** 中交流讨论，感谢各位贡献者的支持！
+> 目前关于 **macOS 平台的汉化注入与自签名支持** 已在功能分支初步实现，现正处于测试验证阶段。
+> 欢迎使用 Mac 的小伙伴切换至 [`feat/macos`](https://github.com/Silas-02/antigravity2-win-linux-cn/tree/feat/macos) 功能分支先行测试与体验！若在体验中遇到任何问题、路径差异或有优化建议，诚邀前往 **[Issues](https://github.com/Silas-02/antigravity2-win-linux-cn/issues)** 交流反馈或提交 **[Pull Request](https://github.com/Silas-02/antigravity2-win-linux-cn/pulls)**，感谢各位的关注与支持！
 
 > **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
 >
 > **语言支持**：简体中文
 >
-> **汉化版本**：v2.12.0
+> **汉化版本**：v2.12.2
 >
-> **匹配版本**：Antigravity v2.12.0
+> **匹配版本**：Antigravity v2.12.2
 >
-> **最近更新**：2026-09-03
+> **最近更新**：2026-09-05
 >
 > **核心运行环境**：验证与还原只需要 Node.js；安装还需要 npm，并通过 `npx` 使用 `@electron/asar`。无需 Python，也无需在仓库内安装项目依赖。
 >
-> **汉化范围**：当前 v2.12.0 词典面向 Antigravity v2.12.0，覆盖主界面、顶部系统菜单与任务栏菜单、加载页、设置面板、新手引导与登录流程、对话及计划任务管理、MCP 服务器列表，以及各类动态状态、提示和操作反馈。少量内容可能因客户端异步渲染、第三方嵌入或官方后续新增界面而暂未覆盖。
+> **汉化范围**：当前 v2.12.2 词典面向 Antigravity v2.12.2，覆盖主界面、顶部系统菜单与任务栏菜单、加载页、设置面板、新手引导与登录流程、对话及计划任务管理、MCP 服务器列表，以及各类动态状态、提示和操作反馈。少量内容可能因客户端异步渲染、第三方嵌入或官方后续新增界面而暂未覆盖。
 >
 > **注入原理**：通过 ASAR 还原与重包，安全注入 `preload.js` 动态翻译机制，绝不修改核心二进制，一键安装与完美还原。
 
 > [!IMPORTANT]
 > **聊天历史记录/对话内容隔离与匹配机制说明（开发者必读）**：
 >
-> - **用户消息隔离**：Antigravity 2.12.0 会为每条已发送及历史用户消息标记 `data-testid="user-input-step"`。翻译引擎默认跳过该容器及其后代节点；仅对结构已确认的客户端固定标签（例如附件区的 `Commented on:`）使用精确例外。用户正文、评论内容和文件名仍不会参与翻译，因此不会影响用户发送的英文原文。
+> - **用户消息隔离**：Antigravity 2.12.2 会为每条已发送及历史用户消息标记 `data-testid="user-input-step"`。翻译引擎默认跳过该容器及其后代节点；仅对结构已确认的客户端固定标签（例如附件区的 `Commented on:`）使用精确例外。用户正文、评论内容和文件名仍不会参与翻译，因此不会影响用户发送的英文原文。
 > - **扩展禁区**：如需为第三方嵌入区或特殊内容区显式禁用翻译，可在容器元素上添加 `data-ag-localization-skip` 属性；该容器及其后代都不会参与翻译。
 > - **核心匹配机制**：
 >   - **精确匹配（任意长度，如 `Knowledge`）**：文本经过折叠空白、去除首尾空白和统一弯引号后，只有在完整文本节点与词条匹配时才会翻译。如果前后还有其他字符或标点（如 `Knowledge是什么`、`哈哈 Knowledge`），则不会触发该精确词条。
@@ -57,7 +57,7 @@
 - **`install.sh`**：Linux 一键汉化执行入口。
 - **`uninstall.sh`**：Linux 使用备份还原官方英文入口。
 - **`localization_engine.js`**：核心汉化逻辑，跨平台自动适配，负责 app.asar 的解包、代码注入和重新打包。
-- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典；当前版本的核心词典为 `dicts/v2.12.0.json`。
+- **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典；当前版本的核心词典为 `dicts/v2.12.2.json`。
 - **`scripts/verify.js`**：仓库统一的非安装式验证入口，负责全量词典审计、版本迁移检查、引擎编译检查、渲染层核心安全契约和 Git 工作区检查。
 - **`scripts/lib/`**：验证入口复用的词典审计、引擎隔离加载和轻量 DOM 契约工具。
 - **`tests/renderer-regression.js`**：少量、稳定的渲染层核心契约，只覆盖动态值、React 碎片、保护边界、重复处理、同级隔离和交互节点保留等高风险机制；普通固定词条不在这里重复建例。
@@ -114,11 +114,11 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，安装脚本在执行时也会自动检测并安全关闭其进程）。
 2. 进入解压或克隆出来的 `antigravity2-win-linux-cn` 文件夹：
    - **Windows**：先普通双击 **`双击安装中文汉化.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
-   - **Linux**：首次使用先赋予脚本执行权限，然后运行安装命令：
+   - **Linux**：运行安装命令：
      ```bash
-     chmod +x install.sh uninstall.sh
      ./install.sh
      ```
+     > **提示**：若直接运行提示 `权限不够` 或 `找不到命令`，可直接改用 `bash ./install.sh`（或 `sudo bash ./install.sh`）运行；汉化引擎在启动时会自动修复并固化本地脚本的可执行权限。
 3. 按提示选择左上角品牌显示方式：
    - **显示英文 Antigravity（默认推荐）**：保留官方品牌名，避免左上角显示过长。
    - **不显示品牌名**：隐藏左上角的品牌文字。
@@ -211,7 +211,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 
 对于界面上不含变量的固定标签、按钮文字、弹窗标题等，直接维护 `dicts/` 下的 JSON 文件：
 
-- **`v2.12.0.json`**：当前版本 v2.12.0 专用词典，适配官方版本迭代的独有界面。
+- **`v2.12.2.json`**：当前版本 v2.12.2 专用词典，适配官方版本迭代的独有界面。
 - **`common.json`**：通用基础词汇、侧边栏概览、登录与引导流程、通用按钮与权限弹窗。
 - **`menu_nav.json`**：系统菜单、顶部导航与状态栏菜单。
 - **`page_agents.json`**：智能体（Agent）、任务及会话管理相关页面。
@@ -274,11 +274,13 @@ node scripts/verify.js
   sudo apt install -y nodejs
   ```
 
-### 2）提示"权限不足"
+### 2）提示"权限不足"或"找不到命令"
 
 * **解决**：
   - **Windows**：默认普通双击对应 `.bat` 文件；只有出现权限不足时，才右键选择 **“以管理员身份运行”**。
-  - **Linux**：默认运行 `./install.sh` 或 `./uninstall.sh`；只有目标位于系统目录并出现 `EACCES` 或权限不足时，才改用 `sudo ./install.sh` 或 `sudo ./uninstall.sh`。
+  - **Linux**：
+    - 默认运行 `./install.sh` 或 `./uninstall.sh`；只有目标位于系统目录并出现 `EACCES` 或权限不足时，才改用 `sudo ./install.sh` 或 `sudo ./uninstall.sh`。
+    - **脚本执行权限自愈提示**：若直接运行提示 `权限不够` 或 `sudo: ./install.sh: 找不到命令`（常见于 ZIP 压缩包解压或部分未保留执行位的文件环境），可直接使用 `bash ./install.sh`（或 `sudo bash ./install.sh`）首次运行；汉化引擎启动时会自动将本地脚本修复并固化为可执行权限（`chmod 755`），后续即可直接以 `./install.sh` 运行。
 
 ### 3）软件官方更新后，汉化失效了怎么办？
 
@@ -295,7 +297,7 @@ node scripts/verify.js
    - 引入编码保护（GBK/CRLF 隔离）与权限自适应机制，杜绝 Windows 控制台乱码与 Linux 权限异常。
 
 2. **模块化分词典与高效版本迭代架构**：
-   - 将单体庞大词典解耦为模块化分包（`common`、`menu_nav`、`page_settings`、`page_agents` 等），结合版本独立词典机制（如 `dicts/v2.12.0.json`），大幅提升词条维护效率并保持追溯清晰。
+   - 将单体庞大词典解耦为模块化分包（`common`、`menu_nav`、`page_settings`、`page_agents` 等），结合版本独立词典机制（如 `dicts/v2.12.2.json`），大幅提升词条维护效率并保持追溯清晰。
 
 3. **严格的内容隔离与高安全渲染保护边界**：
    - **用户消息与历史对话绝对隔离**：严格适配客户端的 `data-testid="user-input-step"` 与 `data-ag-localization-skip` 禁区机制，坚决不翻译、不篡改用户提示词正文、聊天历史、代码块与终端输出，防止误译与数据污染。

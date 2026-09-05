@@ -242,6 +242,30 @@ function runRendererRegression(generatedSource) {
     equal(modifiedPrefix.nodeValue, '修改于 ', '设置覆写前缀未翻译');
     equal(projectButton.textContent, '2 个项目', '设置覆写计数碎片未重组');
 
+    // Input disabled notice structure preserves folder name, reorders project link and appends action suffix.
+    reset();
+    const disabledPrefix = text('Input disabled because ');
+    const folderIcon = element('svg');
+    folderIcon.clickHandler = () => 'folder-icon';
+    const folderNameNode = text('debug_macos_install_script');
+    const folderContainer = element('span', folderIcon, folderNameNode);
+    const middleNotice = text(' does not exist. Create the folder in this ');
+    const projectLinkText = text('project');
+    const projectLink = element('a', projectLinkText);
+    projectLink.clickHandler = () => 'open-project';
+    const noticeBanner = element('div', disabledPrefix, folderContainer, middleNotice, projectLink);
+    mount(noticeBanner);
+    equal(disabledPrefix.nodeValue, '输入已禁用，因为 ', '输入禁用提示前缀未翻译');
+    equal(folderNameNode.nodeValue, 'debug_macos_install_script', '动态文件夹名称被误修改');
+    equal(middleNotice.nodeValue, ' 不存在。请在此', '输入禁用中间说明未翻译');
+    equal(projectLinkText.nodeValue, '项目', '项目链接文本未翻译');
+    equal(projectLink.clickHandler(), 'open-project', '项目链接交互事件丢失');
+    equal(noticeBanner.textContent, '输入已禁用，因为 debug_macos_install_script 不存在。请在此项目中创建该文件夹', '输入禁用提示完整结构重组异常');
+
+    // Idempotency: re-processing must not append duplicate suffixes.
+    mount(noticeBanner);
+    equal(noticeBanner.textContent, '输入已禁用，因为 debug_macos_install_script 不存在。请在此项目中创建该文件夹', '输入禁用提示重复处理产生重复后缀');
+
     return { assertions };
 }
 

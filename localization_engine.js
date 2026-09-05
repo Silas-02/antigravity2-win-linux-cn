@@ -1130,6 +1130,96 @@ function generateJs() {
         return false;
     }
 
+    function translateInputDisabledNotice(element) {
+        if (!element) return false;
+        let current = element.nodeType === Node.TEXT_NODE ? element.parentElement : element;
+
+        for (let depth = 0; current && depth < 7; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            if (current.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(current)) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const rawText = norm(current.textContent);
+            if (!/(?:Input disabled because|输入已禁用[，,]因为)/i.test(rawText) ||
+                !/(?:does not exist|Create the folder in this|不存在.*在此)/i.test(rawText)) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            if (rawText.includes("输入已禁用，因为") && rawText.includes("中创建该文件夹")) {
+                return true;
+            }
+
+            const projectElement = Array.from(current.querySelectorAll('*')).find(candidate => {
+                return !isInBlockedZone(candidate) && /^(?:project|项目)[.。]?$/i.test(norm(candidate.textContent));
+            });
+            if (!projectElement) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const textNodes = collectTextNodes(current);
+            const projectTextNodes = collectTextNodes(projectElement);
+            if (textNodes.length === 0 || projectTextNodes.length === 0 || textNodes.some(tn => isInBlockedZone(tn))) {
+                return false;
+            }
+
+            const firstProjectIndex = textNodes.indexOf(projectTextNodes[0]);
+            const lastProjectIndex = textNodes.indexOf(projectTextNodes[projectTextNodes.length - 1]);
+            if (firstProjectIndex <= 0 || lastProjectIndex < firstProjectIndex) {
+                return false;
+            }
+
+            const prefixIndex = textNodes.findIndex((tn, idx) => {
+                return idx < firstProjectIndex && /(?:Input disabled because|输入已禁用[，,]因为)/i.test(tn.nodeValue || '');
+            });
+            if (prefixIndex < 0) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const middleNodes = [];
+            for (let i = prefixIndex + 1; i < firstProjectIndex; i++) {
+                const val = textNodes[i].nodeValue || '';
+                if (/(?:does not exist|Create the folder in this|不存在|请在此)/i.test(val)) {
+                    middleNodes.push(textNodes[i]);
+                }
+            }
+            if (middleNodes.length === 0) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            replaceTextNode(textNodes[prefixIndex], "输入已禁用，因为 ");
+
+            replaceTextNode(middleNodes[0], " 不存在。请在此");
+            for (let i = 1; i < middleNodes.length; i++) {
+                replaceTextNode(middleNodes[i], '');
+            }
+
+            replaceTextNode(projectTextNodes[0], "项目");
+            for (let i = 1; i < projectTextNodes.length; i++) {
+                replaceTextNode(projectTextNodes[i], '');
+            }
+
+            const suffixNodes = textNodes.slice(lastProjectIndex + 1);
+            if (suffixNodes.length > 0) {
+                replaceTextNode(suffixNodes[0], "中创建该文件夹");
+                for (let i = 1; i < suffixNodes.length; i++) {
+                    replaceTextNode(suffixNodes[i], '');
+                }
+            } else {
+                const suffixNode = document.createTextNode("中创建该文件夹");
+                translatedValues.set(suffixNode, "中创建该文件夹");
+                projectElement.parentNode.insertBefore(suffixNode, projectElement.nextSibling);
+            }
+            return true;
+        }
+        return false;
+    }
+
     function translateShowMoreStatus(element) {
         if (!element || element.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(element)) return false;
         const match = norm(element.textContent).match(/^Show\\s+(\\d+)\\s+more(?:\\.\\.\\.|…)?$/i);
@@ -1619,6 +1709,9 @@ function generateJs() {
 
         if (textLength <= 300 && /(?:archived conversations?|已归档.*(?:会话|对话)|^(?:History|历史记录)[.。]?$)/i.test(rawText.trim())) {
             translated = translateArchivedConversationNotice(element) || translated;
+        }
+        if (textLength <= 320 && /(?:Input disabled because|输入已禁用[，,]因为|does not exist|Create the folder in this)/i.test(rawText)) {
+            translated = translateInputDisabledNotice(element) || translated;
         }
         if (textLength <= 80 && /(?:Show\\s+\\d+\\s+more|显示另外\\s+\\d+\\s+个)/i.test(rawText)) {
             translated = translateShowMoreStatus(element) || translated;
@@ -3299,6 +3392,18 @@ function restoreLocalization(resourcesDir) {
 }
 
 function main() {
+    if (process.platform !== 'win32') {
+        const shellScripts = ['install.sh', 'uninstall.sh'];
+        for (const script of shellScripts) {
+            const scriptPath = path.join(__dirname, script);
+            if (fs.existsSync(scriptPath)) {
+                try {
+                    fs.chmodSync(scriptPath, 0o755);
+                } catch (e) {}
+            }
+        }
+    }
+
     let huifu = false;
     let manualDir = "";
     let noKill = false;
