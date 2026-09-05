@@ -3,10 +3,10 @@
 > [!NOTE]
 > **🍎 macOS (Mac) 端测试与适配说明（实验性测试分支）**
 >
-> 当前分支（`feat/macos-localization`）为 macOS 适配特性的测试分支，**目前尚处于测试验证阶段，还不能完全支持 macOS，本分支目前仅作为测试使用**。
+> 当前分支（`feat/macos`）为 macOS 适配特性的测试分支，**目前尚处于测试验证阶段，还不能完全支持 macOS，本分支目前仅作为测试使用**。
 > 测试版本已提供双击 `.command` 脚本及命令行一键安装/还原方案，支持自动探测应用路径、清理隔离属性（Quarantine）与自签名修复。欢迎 Mac 用户参与测试并反馈！如遇任何问题，欢迎提交 **[Pull Request](https://github.com/Silas-02/antigravity2-win-linux-cn/pulls)** 或在 **[Issues](https://github.com/Silas-02/antigravity2-win-linux-cn/issues)** 中交流讨论。
 
-> **支持系统**：Windows / Linux（已全面支持）；macOS（`feat/macos-localization` 测试分支实验性测试中）
+> **支持系统**：Windows / Linux（已全面支持）；macOS（`feat/macos` 测试分支实验性测试中）
 >
 > **语言支持**：简体中文
 >
@@ -114,7 +114,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 ### 2. 一键安装汉化
 
 1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，安装脚本在执行时也会自动检测并安全关闭其进程）。
-2. 进入解压或克隆出来的汉化文件夹（下载测试分支 ZIP 解压后通常为 `antigravity2-win-linux-cn-feat-macos-localization`）：
+2. 进入解压或克隆出来的汉化文件夹（下载测试分支 ZIP 解压后通常为 `antigravity2-win-linux-cn-feat-macos`）：
    - **Windows**：先普通双击 **`双击安装中文汉化.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
    - **macOS**：直接双击 **`双击安装中文汉化.command`**；或在终端中运行：
      ```bash
@@ -313,7 +313,7 @@ node scripts/verify.js
     打开 Mac 的“终端（Terminal）”，进入解压后的汉化包文件夹，执行以下命令彻底清除网络隔离标记：
     ```bash
     # 1. 切换到解压目录 (或者直接在终端输入 cd 后，将 Finder 中的该文件夹拖入终端)
-    cd /path/to/antigravity2-win-linux-cn-feat-macos-localization
+    cd /path/to/antigravity2-win-linux-cn-feat-macos
 
     # 2. 递归移除当前目录下所有文件的隔离标记
     xattr -d -r com.apple.quarantine .
