@@ -907,6 +907,26 @@ function generateJs() {
                 'How to render rich interactive HTML widgets inline in the chat or as standalone artifacts. Use this skill when you want to show the user diagrams, data visualizations, interactive controls, educational walkthroughs, or any rich visual content beyond plain text and markdown.',
                 "介绍如何在会话中以内嵌方式呈现丰富的交互式 HTML 小组件，或将其作为独立交付件呈现。当您需要向用户展示图示、数据可视化、交互控件、教学演示，或任何超出纯文本和 Markdown 范畴的丰富可视化内容时，请使用此技能。"
             ]
+        },
+        {
+            source: 'migrate-workflows',
+            display: "迁移工作流",
+            descriptions: [
+                'Automatically migrate legacy workflows to modern skills across global and workspace configurations. Scans for existing workflows, creates target SKILL.md files, and safely archives old workflow files.',
+                'Automatically migrate legacy workflows to modern skills across global and workspace configurations.',
+                "自动跨全局和工作区配置将旧版工作流迁移至现代技能。扫描现有工作流，创建目标 SKILL.md 文件，并安全归档旧工作流文件。",
+                "自动跨全局和工作区配置将旧版工作流迁移至现代技能。"
+            ]
+        },
+        {
+            source: 'permissioned-github',
+            display: "GitHub 权限规范",
+            descriptions: [
+                'Guidelines for interacting with GitHub and request permissions from the user when commands fail due to restrictions in the agent environment.',
+                'Guidelines for interacting with GitHub and request permissions from the user when commands fail due to restrictions in the agent environment',
+                "与 GitHub 交互的操作准则，并在命令因智能体环境限制而失败时向用户申请权限。",
+                "与 GitHub 交互的操作准则，并在命令因智能体环境限制而失败时向用户申请权限"
+            ]
         }
     ];
 
