@@ -1,12 +1,12 @@
-# Antigravity 中文汉化引擎（Windows/Linux）
+# Antigravity 中文汉化引擎（Windows/macOS/Linux）
 
 > [!NOTE]
-> **🍎 诚邀社区共建：欢迎提交 macOS (Mac) 端适配 PR！**
+> **🍎 macOS (Mac) 端现已全面支持！**
 >
-> 目前本项目已稳定支持 Windows 与 Linux。为了让更多开发者受益，我们十分期待补全 **macOS 平台的适配**。
-> 非常欢迎有 Mac 设备或开发环境的小伙伴参与适配与测试！如果您有现成的路径规则、安装/还原脚本或优化建议，诚邀提交 **[Pull Request](https://github.com/Silas-02/antigravity2-win-linux-cn/pulls)**，也欢迎在 **[Issues](https://github.com/Silas-02/antigravity2-win-linux-cn/issues)** 中交流讨论，感谢各位贡献者的支持！
+> 本项目现已全面支持 Windows、macOS 与 Linux 三大主流平台。
+> macOS 端提供双击 `.command` 脚本及命令行一键安装/还原方案，支持自动探测应用路径、清理隔离属性（Quarantine）与自签名修复。欢迎 Mac 用户体验并反馈！如遇任何问题，欢迎提交 **[Pull Request](https://github.com/Silas-02/antigravity2-win-linux-cn/pulls)** 或在 **[Issues](https://github.com/Silas-02/antigravity2-win-linux-cn/issues)** 中交流讨论。
 
-> **支持系统**：Windows / Linux（含 Ubuntu 等常见发行版，已内置安装与还原脚本）
+> **支持系统**：Windows / macOS / Linux（含 Ubuntu 等常见发行版，已内置各平台安装与还原脚本）
 >
 > **语言支持**：简体中文
 >
@@ -14,7 +14,7 @@
 >
 > **匹配版本**：Antigravity v2.12.0
 >
-> **最近更新**：2026-09-03
+> **最近更新**：2026-09-05
 >
 > **核心运行环境**：验证与还原只需要 Node.js；安装还需要 npm，并通过 `npx` 使用 `@electron/asar`。无需 Python，也无需在仓库内安装项目依赖。
 >
@@ -54,8 +54,10 @@
 
 - **`双击安装中文汉化.bat`**：Windows 一键汉化执行入口。
 - **`双击卸载还原官方英文.bat`**：Windows 使用备份还原官方英文入口。
-- **`install.sh`**：Linux 一键汉化执行入口。
-- **`uninstall.sh`**：Linux 使用备份还原官方英文入口。
+- **`双击安装中文汉化.command`**：macOS 一键汉化双击执行入口（自动识别 Node 环境与重签名）。
+- **`双击卸载还原官方英文.command`**：macOS 使用备份还原官方英文双击执行入口。
+- **`install.sh`**：macOS / Linux 一键汉化执行入口。
+- **`uninstall.sh`**：macOS / Linux 使用备份还原官方英文入口。
 - **`localization_engine.js`**：核心汉化逻辑，跨平台自动适配，负责 app.asar 的解包、代码注入和重新打包。
 - **`dicts/`**：汉化字典文件夹，内含按模块分类的 JSON 对照翻译字典；当前版本的核心词典为 `dicts/v2.12.0.json`。
 - **`scripts/verify.js`**：仓库统一的非安装式验证入口，负责全量词典审计、版本迁移检查、引擎编译检查、渲染层核心安全契约和 Git 工作区检查。
@@ -114,6 +116,12 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，安装脚本在执行时也会自动检测并安全关闭其进程）。
 2. 进入解压或克隆出来的 `antigravity2-win-linux-cn` 文件夹：
    - **Windows**：先普通双击 **`双击安装中文汉化.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
+   - **macOS**：直接双击 **`双击安装中文汉化.command`**；或在终端中运行：
+     ```bash
+     chmod +x install.sh uninstall.sh 双击安装中文汉化.command 双击卸载还原官方英文.command
+     ./install.sh
+     ```
+     （脚本会自动处理 Node 环境变量、Quarantine 隔离属性与应用自签名；如提示系统目录权限不足，才使用 `sudo ./install.sh`）。
    - **Linux**：首次使用先赋予脚本执行权限，然后运行安装命令：
      ```bash
      chmod +x install.sh uninstall.sh
@@ -126,7 +134,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 4. 运行完成后，重新启动 Antigravity 软件即可使用汉化界面。未覆盖内容请按本文后续流程反馈。
 
 > [!TIP]
-> Linux 安装路径会自动识别。若自动识别失败，可在项目根目录手动指定 Antigravity 的安装目录：
+> macOS / Linux 安装路径会自动识别。若自动识别失败，可在项目根目录手动指定 Antigravity 的安装目录：
 >
 > ```bash
 > ./install.sh --install-dir "/path/to/Antigravity"
@@ -141,6 +149,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，还原脚本在执行时也会自动检测并安全关闭其进程）。
 2. 在当前文件夹下：
    - **Windows**：先普通双击 **`双击卸载还原官方英文.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
+   - **macOS**：直接双击 **`双击卸载还原官方英文.command`**，或在终端中运行 `./uninstall.sh`。如自动定位失败，可追加 `--install-dir "/path/to/Antigravity"`。仅在提示权限不足时，才在同一命令前加 `sudo`。
    - **Linux**：先运行 `./uninstall.sh`；如自动定位失败，可追加 `--install-dir "/path/to/Antigravity"`。仅在提示权限不足时，才在同一命令前加 `sudo`。
 3. 运行完成后，软件将自动清除所有汉化注入，无痕恢复至官方原版英文状态。
 
@@ -198,7 +207,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 ### 🔄 更新生效流程
 
 1. **命令 AI 更新**：在对话中通过截图或文字说明汉化需求；AI 会按界面来源选择修改 `dicts/` 词典或 `localization_engine.js` 动态规则，并执行验证。
-2. **重新注入**：运行安装脚本（Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`；脚本会自动检测并安全关闭正在运行的客户端并完成重包注入）。
+2. **重新注入**：运行安装脚本（Windows 双击 `双击安装中文汉化.bat`，macOS 双击 `双击安装中文汉化.command` 或运行 `./install.sh`，Linux 运行 `./install.sh`；脚本会自动检测并安全关闭正在运行的客户端并完成重包注入）。
 3. **重启软件**：重新打开 Antigravity，检查目标界面是否已经正确汉化。
 
 ---
@@ -266,6 +275,9 @@ node scripts/verify.js
 * **原因**：汉化引擎依赖 Node.js 进行 ASAR 包的解析。
 * **解决**：安装 Node.js 与 npm（LTS 版本即可；安装脚本会通过 `npx` 使用 `@electron/asar`）：
   ```bash
+  # macOS (使用 Homebrew)
+  brew install node
+
   # Ubuntu/Debian
   sudo apt update && sudo apt install -y nodejs npm
 
@@ -278,11 +290,11 @@ node scripts/verify.js
 
 * **解决**：
   - **Windows**：默认普通双击对应 `.bat` 文件；只有出现权限不足时，才右键选择 **“以管理员身份运行”**。
-  - **Linux**：默认运行 `./install.sh` 或 `./uninstall.sh`；只有目标位于系统目录并出现 `EACCES` 或权限不足时，才改用 `sudo ./install.sh` 或 `sudo ./uninstall.sh`。
+  - **macOS / Linux**：默认直接双击对应 `.command` 或运行 `./install.sh` / `./uninstall.sh`；只有目标位于系统目录并出现 `EACCES` 或权限不足时，才改用 `sudo ./install.sh` 或 `sudo ./uninstall.sh`。
 
 ### 3）软件官方更新后，汉化失效了怎么办？
 
-* 软件升级时，官方会覆盖 `app.asar` 文件。重新运行一次安装脚本注入即可（Windows 双击 `双击安装中文汉化.bat`，Linux 运行 `./install.sh`）。
+* 软件升级时，官方会覆盖 `app.asar` 文件。重新运行一次安装脚本注入即可（Windows 双击 `双击安装中文汉化.bat`，macOS 双击 `双击安装中文汉化.command` 或运行 `./install.sh`，Linux 运行 `./install.sh`）。
 
 ## 🤝 致谢与项目关系
 
@@ -291,8 +303,8 @@ node scripts/verify.js
 在此基础上，为了提升汉化长期维护性、系统兼容性与渲染安全边界，本项目进行了深度的工程化重构与迭代，主要特性包括：
 
 1. **跨平台原生支持与脚本体验重构**：
-   - 完备支持 Windows 与 Linux（含 Ubuntu/Debian 等主流发行版），提供开箱即用的一键安装（`install.sh` / `.bat`）与无损还原（`uninstall.sh` / `.bat`）方案。
-   - 引入编码保护（GBK/CRLF 隔离）与权限自适应机制，杜绝 Windows 控制台乱码与 Linux 权限异常。
+   - 完备支持 Windows、macOS 与 Linux（含 Ubuntu/Debian 等主流发行版），提供开箱即用的一键安装（`install.sh` / `.bat` / `.command`）与无损还原（`uninstall.sh` / `.bat` / `.command`）方案。
+   - 引入编码保护（GBK/CRLF 隔离）、macOS 应用自签名与隔离属性自动修复、以及权限自适应机制，杜绝 Windows 控制台乱码、macOS 签名失效与 Linux 权限异常。
 
 2. **模块化分词典与高效版本迭代架构**：
    - 将单体庞大词典解耦为模块化分包（`common`、`menu_nav`、`page_settings`、`page_agents` 等），结合版本独立词典机制（如 `dicts/v2.12.0.json`），大幅提升词条维护效率并保持追溯清晰。

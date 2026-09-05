@@ -2723,13 +2723,13 @@ function cleanTrayJsContent(content) {
 
 let wasAppRunning = false;
 
-function getLinuxTargetUid() {
+function getPosixTargetUid() {
     const sudoUidText = String(process.env.SUDO_UID || '');
     if (/^\d+$/.test(sudoUidText)) return Number(sudoUidText);
     return typeof process.getuid === 'function' ? process.getuid() : null;
 }
 
-function getLinuxProcessTable() {
+function getPosixProcessTable() {
     try {
         const stdout = child_process.execFileSync(
             'ps',
@@ -2753,16 +2753,17 @@ function getLinuxProcessTable() {
     }
 }
 
-function getLinuxAntigravityMainProcesses(processTable = getLinuxProcessTable()) {
-    const targetUid = getLinuxTargetUid();
+function getPosixAntigravityMainProcesses(processTable = getPosixProcessTable()) {
+    const targetUid = getPosixTargetUid();
     return processTable.filter(entry => {
         if (targetUid !== null && entry.uid !== targetUid) return false;
-        if (entry.comm.toLowerCase() !== 'antigravity') return false;
+        const commBase = path.basename(entry.comm).toLowerCase();
+        if (commBase !== 'antigravity') return false;
         return !/(?:^|\s)--type(?:=|\s)/i.test(entry.args);
     });
 }
 
-function collectLinuxProcessTreePids(processTable, rootPids) {
+function collectPosixProcessTreePids(processTable, rootPids) {
     const collected = new Set(rootPids);
     let changed = true;
     while (changed) {
@@ -2776,9 +2777,9 @@ function collectLinuxProcessTreePids(processTable, rootPids) {
     return collected;
 }
 
-function refreshLinuxProcessTree(trackedPids) {
-    const processTable = getLinuxProcessTable();
-    const expanded = collectLinuxProcessTreePids(processTable, trackedPids);
+function refreshPosixProcessTree(trackedPids) {
+    const processTable = getPosixProcessTable();
+    const expanded = collectPosixProcessTreePids(processTable, trackedPids);
     for (const pid of expanded) trackedPids.add(pid);
     return processTable.filter(entry => {
         return trackedPids.has(entry.pid) && !entry.stat.toUpperCase().startsWith('Z');
@@ -2790,7 +2791,7 @@ function sleepSync(milliseconds) {
     Atomics.wait(waitArray, 0, 0, milliseconds);
 }
 
-function signalLinuxProcesses(processEntries, signal) {
+function signalPosixProcesses(processEntries, signal) {
     for (const entry of processEntries) {
         try {
             process.kill(entry.pid, signal);
@@ -2802,12 +2803,12 @@ function signalLinuxProcesses(processEntries, signal) {
     }
 }
 
-function waitForLinuxProcessTreeExit(trackedPids, timeoutMs) {
+function waitForPosixProcessTreeExit(trackedPids, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
-    let remaining = refreshLinuxProcessTree(trackedPids);
+    let remaining = refreshPosixProcessTree(trackedPids);
     while (remaining.length > 0 && Date.now() < deadline) {
         sleepSync(100);
-        remaining = refreshLinuxProcessTree(trackedPids);
+        remaining = refreshPosixProcessTree(trackedPids);
     }
     return remaining;
 }
@@ -2818,9 +2819,9 @@ function checkIfAppIsRunning() {
             const stdout = child_process.execSync('tasklist /fi "imagename eq Antigravity.exe" /nh', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
             return stdout.toLowerCase().includes('antigravity.exe');
         } else {
-            const processTable = getLinuxProcessTable();
+            const processTable = getPosixProcessTable();
             if (processTable.length === 0) return true;
-            return getLinuxAntigravityMainProcesses(processTable).length > 0;
+            return getPosixAntigravityMainProcesses(processTable).length > 0;
         }
     } catch (e) {
     }
@@ -2840,36 +2841,37 @@ function closeAntigravityProcesses() {
         return false;
     }
 
-    const processTable = getLinuxProcessTable();
+    const platformLabel = process.platform === 'darwin' ? 'macOS' : 'Linux';
+    const processTable = getPosixProcessTable();
     if (processTable.length === 0) {
-        console.error("[错误] 无法读取 Linux 进程列表，已停止汉化以避免覆盖运行中的客户端文件。");
+        console.error(`[错误] 无法读取 ${platformLabel} 进程列表，已停止汉化以避免覆盖运行中的客户端文件。`);
         return false;
     }
-    const mainProcesses = getLinuxAntigravityMainProcesses(processTable);
+    const mainProcesses = getPosixAntigravityMainProcesses(processTable);
     if (mainProcesses.length === 0) return true;
 
-    const trackedPids = collectLinuxProcessTreePids(
+    const trackedPids = collectPosixProcessTreePids(
         processTable,
         mainProcesses.map(entry => entry.pid)
     );
     const mainPids = new Set(mainProcesses.map(entry => entry.pid));
 
-    signalLinuxProcesses(mainProcesses, 'SIGTERM');
-    let remaining = waitForLinuxProcessTreeExit(trackedPids, 10000);
+    signalPosixProcesses(mainProcesses, 'SIGTERM');
+    let remaining = waitForPosixProcessTreeExit(trackedPids, 10000);
 
     if (remaining.length > 0) {
         const remainingMainProcesses = remaining.filter(entry => mainPids.has(entry.pid));
         if (remainingMainProcesses.length > 0) {
             console.log("[等待] Antigravity 主进程仍在关闭，正在再次请求正常退出...");
-            signalLinuxProcesses(remainingMainProcesses, 'SIGTERM');
-            remaining = waitForLinuxProcessTreeExit(trackedPids, 5000);
+            signalPosixProcesses(remainingMainProcesses, 'SIGTERM');
+            remaining = waitForPosixProcessTreeExit(trackedPids, 5000);
         }
     }
 
     if (remaining.length > 0 && !remaining.some(entry => mainPids.has(entry.pid))) {
         console.log("[等待] 主程序已退出，正在关闭 " + remaining.length + " 个遗留后台进程...");
-        signalLinuxProcesses(remaining, 'SIGTERM');
-        remaining = waitForLinuxProcessTreeExit(trackedPids, 5000);
+        signalPosixProcesses(remaining, 'SIGTERM');
+        remaining = waitForPosixProcessTreeExit(trackedPids, 5000);
     }
 
     if (remaining.length > 0) {
@@ -2914,8 +2916,11 @@ function detectInstallationDir(manualDir) {
     };
     const hasAntigravityResources = (candidate) => {
         return fs.existsSync(path.join(candidate, "resources", "app.asar")) ||
+            fs.existsSync(path.join(candidate, "resources", "app.asar.bak")) ||
             fs.existsSync(path.join(candidate, "app.asar")) ||
+            fs.existsSync(path.join(candidate, "app.asar.bak")) ||
             fs.existsSync(path.join(candidate, "Contents", "Resources", "app.asar")) ||
+            fs.existsSync(path.join(candidate, "Contents", "Resources", "app.asar.bak")) ||
             fs.existsSync(path.join(candidate, "resources", "app", "product.json"));
     };
 
@@ -2953,6 +2958,21 @@ function detectInstallationDir(manualDir) {
         if (localAppdata) {
             addCandidate(path.join(localAppdata, 'Programs', 'antigravity'));
         }
+    } else if (process.platform === 'darwin') {
+        const homeDir = process.env.HOME || '';
+        addCandidate('/Applications/Antigravity.app');
+        if (homeDir) {
+            addCandidate(path.join(homeDir, 'Applications', 'Antigravity.app'));
+        }
+        try {
+            const mdfindOut = child_process.execSync('mdfind "kMDItemFSName == \'Antigravity.app\'" 2>/dev/null', { encoding: 'utf-8' });
+            for (const line of mdfindOut.split(/\r?\n/)) {
+                const trimmed = line.trim();
+                if (trimmed && !trimmed.includes('/.Trash') && !trimmed.includes('/.Trashes') && !trimmed.startsWith('/Volumes/')) {
+                    addCandidate(trimmed);
+                }
+            }
+        } catch (e) {}
     } else {
         const homeDir = process.env.HOME || '';
         addCandidate('/opt/Antigravity');
@@ -3029,8 +3049,17 @@ function detectInstallationDir(manualDir) {
     process.exit(1);
 }
 
-function runCommandSync(cmd) {
+function runCommandSync(cmd, args) {
     try {
+        if (Array.isArray(args)) {
+            const res = child_process.spawnSync(cmd, args, { encoding: 'utf-8', stdio: 'pipe' });
+            if (res.error) throw res.error;
+            return {
+                success: res.status === 0,
+                stdout: res.stdout || '',
+                stderr: res.stderr || ''
+            };
+        }
         const out = child_process.execSync(cmd, { encoding: 'utf-8', stdio: 'pipe' });
         return { success: true, stdout: out, stderr: '' };
     } catch (e) {
@@ -3063,6 +3092,55 @@ function canWriteAntigravityResources(resourcesDir, entryScript) {
         reportWritePermissionError(resourcesDir, e, '写入', entryScript);
         return false;
     }
+}
+
+function findMacAppBundle(resourcesDir) {
+    if (!resourcesDir) return null;
+    let current = path.resolve(resourcesDir);
+    while (current && current !== path.dirname(current)) {
+        if (current.toLowerCase().endsWith('.app') && fs.existsSync(current)) {
+            return current;
+        }
+        current = path.dirname(current);
+    }
+    return null;
+}
+
+function resignAppOnMac(resourcesDir) {
+    if (process.platform !== 'darwin') return true;
+
+    let targetApp = findMacAppBundle(resourcesDir);
+    if (!targetApp) {
+        console.warn("[警告] 未能识别到 Antigravity.app 目录结构，跳过 macOS 重签名。");
+        return true;
+    }
+    try {
+        targetApp = fs.realpathSync(targetApp);
+    } catch (e) {}
+
+    console.log(`[签名] 正在清理 macOS 隔离属性并执行自签名: ${targetApp}`);
+    const xattrRes = runCommandSync('xattr', ['-cr', targetApp]);
+    if (!xattrRes.success) {
+        console.warn(`[警告] 清理 quarantine 属性时出现提示: ${xattrRes.stderr || xattrRes.stdout}`);
+    }
+
+    const signRes = runCommandSync('codesign', [
+        '--force',
+        '--deep',
+        '--preserve-metadata=identifier,entitlements,flags,runtime',
+        '--sign',
+        '-',
+        targetApp
+    ]);
+    if (!signRes.success) {
+        console.error(`[错误] macOS 应用签名失败。`);
+        console.error(`详情: ${signRes.stderr}\n${signRes.stdout}`);
+        console.error(`[提示] 请检查是否已安装 Xcode Command Line Tools (xcode-select --install)。`);
+        return false;
+    }
+
+    console.log(`[√] macOS 应用自签名成功！`);
+    return true;
 }
 
 function installLocalization(resourcesDir) {
@@ -3165,7 +3243,14 @@ function installLocalization(resourcesDir) {
         'Zoom In': '放大',
         'Zoom Out': '缩小',
         'Toggle Full Screen': '切换全屏',
-        'Version': '版本'
+        'Version': '版本',
+        'About Antigravity': '关于 Antigravity',
+        'Services': '服务',
+        'Hide Antigravity': '隐藏 Antigravity',
+        'Hide Others': '隐藏其他',
+        'Show All': '显示全部',
+        'Quit Antigravity': '退出 Antigravity',
+        'Quit': '退出'
     };
     function translateMenu(items) {
         for (const item of items) {
@@ -3279,6 +3364,11 @@ function installLocalization(resourcesDir) {
     }
 
     console.log(`[√] Antigravity 汉化部署完成！`);
+    if (process.platform === 'darwin') {
+        if (!resignAppOnMac(resourcesDir)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -3295,6 +3385,11 @@ function restoreLocalization(resourcesDir) {
     fs.copyFileSync(bakPath, asarPath);
     fs.unlinkSync(bakPath);
     console.log("[√] 官方 app.asar 已成功恢复！");
+    if (process.platform === 'darwin') {
+        if (!resignAppOnMac(resourcesDir)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -3374,9 +3469,36 @@ function main() {
                 const exePath = path.join(installDir, 'Antigravity.exe');
                 if (fs.existsSync(exePath)) {
                     const child = child_process.spawn(exePath, [], { detached: true, stdio: 'ignore' });
+                    child.on('error', () => {});
                     child.unref();
                     console.log("[启动] 客户端启动成功！");
                     launched = true;
+                }
+            } else if (process.platform === 'darwin') {
+                const runningUnderSudo = typeof process.getuid === 'function'
+                    && process.getuid() === 0
+                    && process.env.SUDO_USER
+                    && process.env.SUDO_USER !== 'root';
+                if (runningUnderSudo) {
+                    console.log("[提示] 当前通过 sudo 安装；为避免以 root 身份启动桌面应用，请手动启动 Antigravity。");
+                    restartDeferred = true;
+                } else {
+                    const targetApp = findMacAppBundle(resourcesDir) || findMacAppBundle(installDir);
+                    if (targetApp && fs.existsSync(targetApp)) {
+                        const child = child_process.spawn('open', [targetApp], { detached: true, stdio: 'ignore' });
+                        child.on('error', () => {});
+                        child.unref();
+                        console.log("[启动] 客户端启动成功！");
+                        launched = true;
+                    } else {
+                        try {
+                            const child = child_process.spawn('open', ['-a', 'Antigravity'], { detached: true, stdio: 'ignore' });
+                            child.on('error', () => {});
+                            child.unref();
+                            console.log("[启动] 客户端启动成功！");
+                            launched = true;
+                        } catch (e) {}
+                    }
                 }
             } else {
                 const runningUnderSudo = typeof process.getuid === 'function'
@@ -3395,6 +3517,7 @@ function main() {
                     for (const exePath of exeCandidates) {
                         if (fs.existsSync(exePath)) {
                             const child = child_process.spawn(exePath, [], { detached: true, stdio: 'ignore' });
+                            child.on('error', () => {});
                             child.unref();
                             console.log("[启动] 客户端启动成功！");
                             launched = true;
@@ -3406,6 +3529,7 @@ function main() {
                             const whichOut = child_process.execSync('which antigravity 2>/dev/null || which Antigravity 2>/dev/null', { encoding: 'utf-8' }).trim();
                             if (whichOut) {
                                 const child = child_process.spawn(whichOut, [], { detached: true, stdio: 'ignore' });
+                                child.on('error', () => {});
                                 child.unref();
                                 console.log("[启动] 客户端启动成功！");
                                 launched = true;

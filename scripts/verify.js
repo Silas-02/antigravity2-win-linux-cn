@@ -9,7 +9,7 @@ const { compileJavaScript, generateInjection } = require('./lib/load-engine');
 const { runRendererRegression } = require('../tests/renderer-regression');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
-const TEXT_EXTENSIONS = new Set(['.js', '.json', '.md', '.sh', '.ps1']);
+const TEXT_EXTENSIONS = new Set(['.js', '.json', '.md', '.sh', '.ps1', '.command']);
 const TEXT_BASENAMES = new Set(['.gitattributes']);
 const SKIPPED_DIRECTORIES = new Set(['.git', '_temp_asar', 'node_modules', 'showimg']);
 
