@@ -114,7 +114,7 @@ node scripts/verify.js --preload "/absolute/path/to/preload.js"
 ### 2. 一键安装汉化
 
 1. **退出软件（可选）**：建议保存当前工作后退出 Antigravity 软件（若未手动退出，安装脚本在执行时也会自动检测并安全关闭其进程）。
-2. 进入解压或克隆出来的 `antigravity2-win-linux-cn` 文件夹：
+2. 进入解压或克隆出来的汉化文件夹（下载测试分支 ZIP 解压后通常为 `antigravity2-win-linux-cn-feat-macos-localization`）：
    - **Windows**：先普通双击 **`双击安装中文汉化.bat`**；仅在提示权限不足时，右键该文件并选择“以管理员身份运行”。
    - **macOS**：直接双击 **`双击安装中文汉化.command`**；或在终端中运行：
      ```bash
@@ -313,7 +313,7 @@ node scripts/verify.js
     打开 Mac 的“终端（Terminal）”，进入解压后的汉化包文件夹，执行以下命令彻底清除网络隔离标记：
     ```bash
     # 1. 切换到解压目录 (或者直接在终端输入 cd 后，将 Finder 中的该文件夹拖入终端)
-    cd /path/to/antigravity2-win-linux-cn
+    cd /path/to/antigravity2-win-linux-cn-feat-macos-localization
 
     # 2. 递归移除当前目录下所有文件的隔离标记
     xattr -d -r com.apple.quarantine .
