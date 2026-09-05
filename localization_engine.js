@@ -907,6 +907,26 @@ function generateJs() {
                 'How to render rich interactive HTML widgets inline in the chat or as standalone artifacts. Use this skill when you want to show the user diagrams, data visualizations, interactive controls, educational walkthroughs, or any rich visual content beyond plain text and markdown.',
                 "介绍如何在会话中以内嵌方式呈现丰富的交互式 HTML 小组件，或将其作为独立交付件呈现。当您需要向用户展示图示、数据可视化、交互控件、教学演示，或任何超出纯文本和 Markdown 范畴的丰富可视化内容时，请使用此技能。"
             ]
+        },
+        {
+            source: 'migrate-workflows',
+            display: "迁移工作流",
+            descriptions: [
+                'Automatically migrate legacy workflows to modern skills across global and workspace configurations. Scans for existing workflows, creates target SKILL.md files, and safely archives old workflow files.',
+                'Automatically migrate legacy workflows to modern skills across global and workspace configurations.',
+                "自动跨全局和工作区配置将旧版工作流迁移至现代技能。扫描现有工作流，创建目标 SKILL.md 文件，并安全归档旧工作流文件。",
+                "自动跨全局和工作区配置将旧版工作流迁移至现代技能。"
+            ]
+        },
+        {
+            source: 'permissioned-github',
+            display: "GitHub 权限规范",
+            descriptions: [
+                'Guidelines for interacting with GitHub and request permissions from the user when commands fail due to restrictions in the agent environment.',
+                'Guidelines for interacting with GitHub and request permissions from the user when commands fail due to restrictions in the agent environment',
+                "与 GitHub 交互的操作准则，并在命令因智能体环境限制而失败时向用户申请权限。",
+                "与 GitHub 交互的操作准则，并在命令因智能体环境限制而失败时向用户申请权限"
+            ]
         }
     ];
 
@@ -1124,6 +1144,96 @@ function generateJs() {
                 for (let i = 1; i < suffixNodes.length; i++) replaceTextNode(suffixNodes[i], '');
             } else {
                 historyElement.parentNode.insertBefore(document.createTextNode("中查看已归档的会话。"), historyElement.nextSibling);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    function translateInputDisabledNotice(element) {
+        if (!element) return false;
+        let current = element.nodeType === Node.TEXT_NODE ? element.parentElement : element;
+
+        for (let depth = 0; current && depth < 7; depth++) {
+            if (current === document.body || current === document.documentElement) break;
+            if (current.nodeType !== Node.ELEMENT_NODE || isInBlockedZone(current)) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const rawText = norm(current.textContent);
+            if (!/(?:Input disabled because|输入已禁用[，,]因为)/i.test(rawText) ||
+                !/(?:does not exist|Create the folder in this|不存在.*在此)/i.test(rawText)) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            if (rawText.includes("输入已禁用，因为") && rawText.includes("中创建该文件夹")) {
+                return true;
+            }
+
+            const projectElement = Array.from(current.querySelectorAll('*')).find(candidate => {
+                return !isInBlockedZone(candidate) && /^(?:project|项目)[.。]?$/i.test(norm(candidate.textContent));
+            });
+            if (!projectElement) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const textNodes = collectTextNodes(current);
+            const projectTextNodes = collectTextNodes(projectElement);
+            if (textNodes.length === 0 || projectTextNodes.length === 0 || textNodes.some(tn => isInBlockedZone(tn))) {
+                return false;
+            }
+
+            const firstProjectIndex = textNodes.indexOf(projectTextNodes[0]);
+            const lastProjectIndex = textNodes.indexOf(projectTextNodes[projectTextNodes.length - 1]);
+            if (firstProjectIndex <= 0 || lastProjectIndex < firstProjectIndex) {
+                return false;
+            }
+
+            const prefixIndex = textNodes.findIndex((tn, idx) => {
+                return idx < firstProjectIndex && /(?:Input disabled because|输入已禁用[，,]因为)/i.test(tn.nodeValue || '');
+            });
+            if (prefixIndex < 0) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            const middleNodes = [];
+            for (let i = prefixIndex + 1; i < firstProjectIndex; i++) {
+                const val = textNodes[i].nodeValue || '';
+                if (/(?:does not exist|Create the folder in this|不存在|请在此)/i.test(val)) {
+                    middleNodes.push(textNodes[i]);
+                }
+            }
+            if (middleNodes.length === 0) {
+                current = current.parentElement || (current.parentNode && current.parentNode.host);
+                continue;
+            }
+
+            replaceTextNode(textNodes[prefixIndex], "输入已禁用，因为 ");
+
+            replaceTextNode(middleNodes[0], " 不存在。请在此");
+            for (let i = 1; i < middleNodes.length; i++) {
+                replaceTextNode(middleNodes[i], '');
+            }
+
+            replaceTextNode(projectTextNodes[0], "项目");
+            for (let i = 1; i < projectTextNodes.length; i++) {
+                replaceTextNode(projectTextNodes[i], '');
+            }
+
+            const suffixNodes = textNodes.slice(lastProjectIndex + 1);
+            if (suffixNodes.length > 0) {
+                replaceTextNode(suffixNodes[0], "中创建该文件夹");
+                for (let i = 1; i < suffixNodes.length; i++) {
+                    replaceTextNode(suffixNodes[i], '');
+                }
+            } else {
+                const suffixNode = document.createTextNode("中创建该文件夹");
+                translatedValues.set(suffixNode, "中创建该文件夹");
+                projectElement.parentNode.insertBefore(suffixNode, projectElement.nextSibling);
             }
             return true;
         }
@@ -1619,6 +1729,9 @@ function generateJs() {
 
         if (textLength <= 300 && /(?:archived conversations?|已归档.*(?:会话|对话)|^(?:History|历史记录)[.。]?$)/i.test(rawText.trim())) {
             translated = translateArchivedConversationNotice(element) || translated;
+        }
+        if (textLength <= 320 && /(?:Input disabled because|输入已禁用[，,]因为|does not exist|Create the folder in this)/i.test(rawText)) {
+            translated = translateInputDisabledNotice(element) || translated;
         }
         if (textLength <= 80 && /(?:Show\\s+\\d+\\s+more|显示另外\\s+\\d+\\s+个)/i.test(rawText)) {
             translated = translateShowMoreStatus(element) || translated;
@@ -2753,14 +2866,19 @@ function getPosixProcessTable() {
     }
 }
 
+function isPosixAntigravityMainProcess(entry, targetUid = getPosixTargetUid()) {
+    if (targetUid !== null && entry.uid !== targetUid) return false;
+    if (/(?:^|\s)--type(?:=|\s)/i.test(entry.args)) return false;
+
+    const commBase = path.basename(entry.comm).toLowerCase();
+    if (commBase === 'antigravity') return true;
+
+    return /^\s*\/.*\/Antigravity\.app\/Contents\/MacOS\/Antigravity(?:\s|$)/i.test(entry.args);
+}
+
 function getPosixAntigravityMainProcesses(processTable = getPosixProcessTable()) {
     const targetUid = getPosixTargetUid();
-    return processTable.filter(entry => {
-        if (targetUid !== null && entry.uid !== targetUid) return false;
-        const commBase = path.basename(entry.comm).toLowerCase();
-        if (commBase !== 'antigravity') return false;
-        return !/(?:^|\s)--type(?:=|\s)/i.test(entry.args);
-    });
+    return processTable.filter(entry => isPosixAntigravityMainProcess(entry, targetUid));
 }
 
 function collectPosixProcessTreePids(processTable, rootPids) {
@@ -3130,9 +3248,6 @@ function resignAppOnMac(resourcesDir) {
         console.warn(`[警告] 清理 quarantine 属性时出现提示: ${xattrRes.stderr || xattrRes.stdout}`);
     }
 
-    // 依照 macOS 签名规范自内向外（Inside-Out）优先重签内部 Frameworks / Dylibs / Helpers，
-    // 嵌套的 .framework 与 .app 需带上 --deep 确保其内部动态库及辅助程序完成签名，
-    // 避免顶层签名时遗留旧签名导致 dyld 报签名/校验不一致。
     const frameworksDir = path.join(targetApp, 'Contents', 'Frameworks');
     if (fs.existsSync(frameworksDir)) {
         try {
@@ -3156,9 +3271,6 @@ function resignAppOnMac(resourcesDir) {
         }
     }
 
-    // 注意：绝不能传入 --preserve-metadata=flags,runtime！
-    // 否则会保留 Hardened Runtime（硬化运行时），而硬化运行时默认强制执行 Library Validation（库校验）；
-    // 在本地自签名（ad-hoc，-）缺少 Apple Team ID 的情况下，dyld 会因 Team ID 不一致在启动阶段直接终止进程闪退（SIGABRT）。
     const signRes = runCommandSync('codesign', [
         '--force',
         '--deep',
@@ -3428,6 +3540,23 @@ function restoreLocalization(resourcesDir) {
 }
 
 function main() {
+    if (process.platform !== 'win32') {
+        const shellScripts = [
+            'install.sh',
+            'uninstall.sh',
+            '双击安装中文汉化.command',
+            '双击卸载还原官方英文.command'
+        ];
+        for (const script of shellScripts) {
+            const scriptPath = path.join(__dirname, script);
+            if (fs.existsSync(scriptPath)) {
+                try {
+                    fs.chmodSync(scriptPath, 0o755);
+                } catch (e) {}
+            }
+        }
+    }
+
     let huifu = false;
     let manualDir = "";
     let noKill = false;
