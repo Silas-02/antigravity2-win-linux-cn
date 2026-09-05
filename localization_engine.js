@@ -3080,20 +3080,6 @@ function reportWritePermissionError(resourcesDir, error, action, entryScript = '
     }
 }
 
-function canWriteAntigravityResources(resourcesDir, entryScript) {
-    const asarPath = path.join(resourcesDir, "app.asar");
-    if (!fs.existsSync(asarPath)) return true;
-
-    try {
-        fs.accessSync(resourcesDir, fs.constants.W_OK | fs.constants.X_OK);
-        fs.accessSync(asarPath, fs.constants.R_OK | fs.constants.W_OK);
-        return true;
-    } catch (e) {
-        reportWritePermissionError(resourcesDir, e, '写入', entryScript);
-        return false;
-    }
-}
-
 function findMacAppBundle(resourcesDir) {
     if (!resourcesDir) return null;
     let current = path.resolve(resourcesDir);
@@ -3104,6 +3090,26 @@ function findMacAppBundle(resourcesDir) {
         current = path.dirname(current);
     }
     return null;
+}
+
+function canWriteAntigravityResources(resourcesDir, entryScript) {
+    const asarPath = path.join(resourcesDir, "app.asar");
+    if (!fs.existsSync(asarPath)) return true;
+
+    try {
+        fs.accessSync(resourcesDir, fs.constants.W_OK | fs.constants.X_OK);
+        fs.accessSync(asarPath, fs.constants.R_OK | fs.constants.W_OK);
+        if (process.platform === 'darwin') {
+            const targetApp = findMacAppBundle(resourcesDir);
+            if (targetApp) {
+                fs.accessSync(targetApp, fs.constants.W_OK | fs.constants.X_OK);
+            }
+        }
+        return true;
+    } catch (e) {
+        reportWritePermissionError(resourcesDir, e, '写入', entryScript);
+        return false;
+    }
 }
 
 function resignAppOnMac(resourcesDir) {
@@ -3124,10 +3130,38 @@ function resignAppOnMac(resourcesDir) {
         console.warn(`[警告] 清理 quarantine 属性时出现提示: ${xattrRes.stderr || xattrRes.stdout}`);
     }
 
+    // 依照 macOS 签名规范自内向外（Inside-Out）优先重签内部 Frameworks / Dylibs / Helpers，
+    // 嵌套的 .framework 与 .app 需带上 --deep 确保其内部动态库及辅助程序完成签名，
+    // 避免顶层签名时遗留旧签名导致 dyld 报签名/校验不一致。
+    const frameworksDir = path.join(targetApp, 'Contents', 'Frameworks');
+    if (fs.existsSync(frameworksDir)) {
+        try {
+            const entries = fs.readdirSync(frameworksDir);
+            for (const entry of entries) {
+                const fullPath = path.join(frameworksDir, entry);
+                if (entry.endsWith('.framework') || entry.endsWith('.app')) {
+                    const res = runCommandSync('codesign', ['--force', '--deep', '--sign', '-', fullPath]);
+                    if (!res.success) {
+                        console.warn(`[警告] 重签内部组件 ${entry} 出现提示: ${res.stderr || res.stdout}`);
+                    }
+                } else if (entry.endsWith('.dylib')) {
+                    const res = runCommandSync('codesign', ['--force', '--sign', '-', fullPath]);
+                    if (!res.success) {
+                        console.warn(`[警告] 重签内部动态库 ${entry} 出现提示: ${res.stderr || res.stdout}`);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn(`[警告] 遍历 Frameworks 目录失败: ${e.message}`);
+        }
+    }
+
+    // 注意：绝不能传入 --preserve-metadata=flags,runtime！
+    // 否则会保留 Hardened Runtime（硬化运行时），而硬化运行时默认强制执行 Library Validation（库校验）；
+    // 在本地自签名（ad-hoc，-）缺少 Apple Team ID 的情况下，dyld 会因 Team ID 不一致在启动阶段直接终止进程闪退（SIGABRT）。
     const signRes = runCommandSync('codesign', [
         '--force',
         '--deep',
-        '--preserve-metadata=identifier,entitlements,flags,runtime',
         '--sign',
         '-',
         targetApp
